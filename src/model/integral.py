@@ -8,6 +8,7 @@ from src.model.components.encoder import EmbeddingAndSeqformer
 from src.model.components.decoder import DenoisingNet
 from src.model.components.decoder_layers import Linear
 from src.utils.all_atom import calc_distogram
+from src.utils.model_utils import aggregate_features
 
 
 def get_positional_embedding(indices, embedding_dim, max_len=2056):
@@ -87,13 +88,25 @@ class FoldEmbedder(nn.Module):
         )
 
     def forward(self, batch):
+        batch_size, num_node = batch['residue_index'].shape
+
         s_encode, z_encode = self.encoder(batch)
 
         if self.latent_c['use_pair'] == 'False':
             s_encode = self.latent_transform(s_encode)
         else:
-            # to update
-            pass
+            s_encode_ = torch.zeros_like(s_encode)
+            s_encode = aggregate_features(s_encode, batch['edge_index'], z_encode)
+            s_encode = self.graph_transform(s_encode)
+
+            s_encode_.scatter_add_(
+                src=s_encode,
+                dim=1,
+                index=batch['edge_index'].reshape(
+                    batch_size, num_node, 1
+                ).expand(batch_size, num_node, s_encode.shape[-1])
+            )
+            s_encode = self.latent_decode(s_encode_)
 
         # positional embedding on residue index
         s_decode = self.latent_decode(torch.cat([
@@ -103,23 +116,22 @@ class FoldEmbedder(nn.Module):
 
         z_decode = []
 
-        batch_size, num_nodes = s_encode.shape[:2]
         relative_position_embed = (
             batch['residue_index'][:, :, None] - batch['residue_index'][:, None, :]
         ).reshape(
-            [batch_size, num_nodes ** 2]
+            [batch_size, num_node ** 2]
         )
         z_decode.append(self.position_embed(relative_position_embed))
 
         z_init = torch.cat([
-            torch.tile(s_encode[:, :, None, :], (1, 1, num_nodes, 1)),
-            torch.tile(s_encode[:, None, :, :], (1, num_nodes, 1, 1))
-        ], dim=-1).float().reshape([batch_size, num_nodes ** 2, -1])
+            torch.tile(s_encode[:, :, None, :], (1, 1, num_node, 1)),
+            torch.tile(s_encode[:, None, :, :], (1, num_node, 1, 1))
+        ], dim=-1).float().reshape([batch_size, num_node ** 2, -1])
         z_decode.append(z_init)
 
         if self.condition:
             z_decode.append(
-                self.distogram_embed(batch['condition_ca']).reshape([batch_size, num_nodes ** 2, -1])
+                self.distogram_embed(batch['condition_ca']).reshape([batch_size, num_node ** 2, -1])
             )
         z_decode = self.latent_edge_decode(torch.cat(z_decode, dim=-1))
 
