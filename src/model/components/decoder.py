@@ -1,19 +1,19 @@
 import torch
 from torch import nn
 
+from src.model.components.decoder_layers import translationIPA
 from src.common.all_atom import compute_backbone
 
 
 class DenoisingNet(nn.Module):
     def __init__(self,
-                 embedder: nn.Module,
-                 translator: nn.Module,
+                 translator_config: dict,
                  ):
         super(DenoisingNet, self).__init__()
-        self.embedder = embedder  # embedding module
-        self.translator = translator  # translationIPA
 
-    def forward(self, batch, as_tensor_7=False):
+        self.translator = translationIPA(**translator_config)
+
+    def forward(self, node_embed, edge_embed, batch, as_tensor_7=False):
         """Forward computes the denoised frames p(X^t|X^{t+1})
         """
         # Frames as [batch, res, 7] tensors.
@@ -21,13 +21,6 @@ class DenoisingNet(nn.Module):
         fixed_mask = batch['fixed_mask'].type(torch.float)
         edge_mask = node_mask[..., None] * node_mask[..., None, :]
 
-        # Get embeddings.
-        node_embed, edge_embed = self.embedder(
-            residue_idx=batch['residue_idx'],
-            t=batch['t'],
-            fixed_mask=fixed_mask,
-            self_conditioning_ca=batch['sc_ca_t'],
-        )
         node_embed = node_embed * node_mask[..., None]  # (L, D)
         edge_embed = edge_embed * edge_mask[..., None]  # (L, L, D)
 

@@ -30,9 +30,9 @@ class EmbeddingAndSeqformer(nn.Module):
         self.proj_rel_pos = Linear(c.max_relative_feature * 2 + 2 + 1, c.pair_channel, init='linear')
         self.proj_pair_dis = Linear(c.pair_dist_channel, c.pair_channel, init='linear')
 
-        if c.recycle_features:
-            self.prev_seq_norm = LayerNorm(c.seq_channel)
-            self.prev_pair_norm = LayerNorm(c.pair_channel)
+        # if c.recycle_features:
+        #     self.prev_seq_norm = LayerNorm(c.seq_channel)
+        #     self.prev_pair_norm = LayerNorm(c.pair_channel)
 
         # if c.lm.enabled:
         #     self.esm = ESMEmbeddingExtractor.get(c.lm.model_path, repr_layer=c.lm.repr_layer)
@@ -76,13 +76,13 @@ class EmbeddingAndSeqformer(nn.Module):
         cle = torch.cat([batch['left_gt_calpha3_frame_positions'], batch['right_gt_calpha3_frame_positions']], dim=-1)
         seq_act = self.proj_cle_embed(cle)
 
-        if c.recycle_features:
-            if 'prev_seq' in batch:
-                batch['prev_seq'].requires_grad = True
-                seq_act = seq_act + self.prev_seq_norm(batch['prev_seq'])
-            if 'prev_pair' in batch:
-                batch['prev_pair'].requires_grad = True
-                pair_act = pair_act + self.prev_pair_norm(batch['prev_pair'])
+        # if c.recycle_features:
+        #     if 'prev_seq' in batch:
+        #         batch['prev_seq'].requires_grad = True
+        #         seq_act = seq_act + self.prev_seq_norm(batch['prev_seq'])
+        #     if 'prev_pair' in batch:
+        #         batch['prev_pair'].requires_grad = True
+        #         pair_act = pair_act + self.prev_pair_norm(batch['prev_pair'])
 
         # if c.lm.enabled:
         #     if 'heads' in batch and 'seqhead' in batch['heads'] and (
