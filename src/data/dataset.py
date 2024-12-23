@@ -8,8 +8,9 @@ import tree
 import numpy as np
 import pandas as pd
 import torch
+import torch.nn.functional as F
 
-from src.utils import residue_constants, data_transforms
+from src.utils import residue_constants, data_transforms, r3_utils
 
 CA_IDX = residue_constants.atom_order['CA']
 DTYPE_MAPPING = {
@@ -20,6 +21,40 @@ DTYPE_MAPPING = {
 
 
 def get_encoded_features(data_object: dict):
+    calpha_pos = data_object['atom_positions'][:, CA_IDX]
+
+    # calpha_pos, (b, l, 3)
+    # calpha_mask, (b, l)
+    prev_calpha_pos = F.pad(calpha_pos[:, :-1], [0, 0, 1, 0])
+    prev2_calpha_pos = F.pad(calpha_pos[:, :-2], [0, 0, 2, 0])
+
+    next_calpha_pos = F.pad(calpha_pos[:, 1:], [0, 0, 0, 1])
+    next2_calpha_pos = F.pad(calpha_pos[:, 2:], [0, 0, 0, 2])
+
+    # (b, l, 3x3), (b, l, 3)
+    left_gt_frames = r3_utils.rigids_from_3_points(
+        point_on_neg_x_axis=prev_calpha_pos,
+        origin=calpha_pos,
+        point_on_xy_plane=prev2_calpha_pos)
+
+    left_forth_atom_rel_pos = r3_utils.rigids_mul_vecs(
+        r3_utils.invert_rigids(left_gt_frames),
+        next_calpha_pos)
+
+    right_gt_frames = r3_utils.rigids_from_3_points(
+        point_on_neg_x_axis=next_calpha_pos,
+        origin=calpha_pos,
+        point_on_xy_plane=next2_calpha_pos)
+
+    right_forth_atom_rel_pos = r3_utils.rigids_mul_vecs(
+        r3_utils.invert_rigids(right_gt_frames),
+        prev_calpha_pos)
+
+    ret = {
+        'left_gt_calpha3_frame_positions': left_forth_atom_rel_pos,
+        'right_gt_calpha3_frame_positions': right_forth_atom_rel_pos,
+    }
+    data_object.update(ret)
     return data_object
 
 
