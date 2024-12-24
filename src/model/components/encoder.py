@@ -46,9 +46,9 @@ class EmbeddingAndSeqformer(nn.Module):
     def forward(self, batch):
         c = self.config
 
-        seq, mask = batch['seq'], batch['mask']
-        batch_size, num_residue = seq.shape[:2]
-        device = seq.device
+        mask = batch['residue_mask']
+        batch_size, num_residue = mask.shape[:2]
+        device = mask.device
 
         # sequence distance
         seq_pos = torch.arange(num_residue, device=device)

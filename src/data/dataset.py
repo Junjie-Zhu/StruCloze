@@ -2,7 +2,7 @@ import os
 import pickle
 from functools import lru_cache
 from pathlib import Path
-from typing import Union, Optional
+from typing import Union, Optional, Sequence, Dict, List
 import tree
 
 import numpy as np
@@ -216,7 +216,7 @@ class ProteinDataset(torch.nn.utils.Dataset):
                  transform: Optional[callable] = None,
                  training: bool = True,
     ):
-        super.__init__()
+        super().__init__()
 
         self.path_to_dataset = os.path.expanduser(path_to_dataset)
         assert self.path_to_dataset.endswith('.csv'), 'Please provide a metadata in csv'
@@ -256,3 +256,55 @@ class ProteinDataset(torch.nn.utils.Dataset):
         data_object['accession_code'] = accession_code
 
         return data_object
+
+
+class BatchTensorConverter:
+    """Callable to convert an unprocessed (labels + strings) batch to a
+    processed (labels + tensor) batch.
+    """
+
+    def __init__(self, target_keys: Optional[List] = None):
+        self.target_keys = target_keys
+
+    def __call__(self, raw_batch: Sequence[Dict[str, object]]):
+        B = len(raw_batch)
+        # Only do for Tensor
+        target_keys = self.target_keys \
+            if self.target_keys is not None else [k for k, v in raw_batch[0].items() if torch.is_tensor(v)]
+        # Non-array, for example string, int
+        non_array_keys = [k for k in raw_batch[0] if k not in target_keys]
+        collated_batch = dict()
+        for k in target_keys:
+            collated_batch[k] = self.collate_dense_tensors([d[k] for d in raw_batch], pad_v=0.0)
+        for k in non_array_keys:  # return non-array keys as is
+            collated_batch[k] = [d[k] for d in raw_batch]
+        return collated_batch
+
+    @staticmethod
+    def collate_dense_tensors(samples: Sequence, pad_v: float = 0.0):
+        """
+        Takes a list of tensors with the following dimensions:
+            [(d_11,       ...,           d_1K),
+             (d_21,       ...,           d_2K),
+             ...,
+             (d_N1,       ...,           d_NK)]
+        and stack + pads them into a single tensor of:
+        (N, max_i=1,N { d_i1 }, ..., max_i=1,N {diK})
+        """
+        if len(samples) == 0:
+            return torch.Tensor()
+        if len(set(x.dim() for x in samples)) != 1:
+            raise RuntimeError(
+                f"Samples has varying dimensions: {[x.dim() for x in samples]}"
+            )
+        (device,) = tuple(set(x.device for x in samples))  # assumes all on same device
+        max_shape = [max(lst) for lst in zip(*[x.shape for x in samples])]
+        result = torch.empty(
+            len(samples), *max_shape, dtype=samples[0].dtype, device=device
+        )
+        result.fill_(pad_v)
+        for i in range(len(samples)):
+            result_i = result[i]
+            t = samples[i]
+            result_i[tuple(slice(0, k) for k in t.shape)] = t
+        return result
