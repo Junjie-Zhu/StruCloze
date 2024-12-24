@@ -9,6 +9,7 @@ import numpy as np
 import pandas as pd
 import torch
 import torch.nn.functional as F
+from einops import rearrange
 
 from src.utils import residue_constants, data_transforms, r3_utils
 
@@ -20,16 +21,16 @@ DTYPE_MAPPING = {
 }
 
 
-def get_encoded_features(data_object: dict):
+def get_encoded_frames(data_object: dict):
     calpha_pos = data_object['atom_positions'][:, CA_IDX]
 
     # calpha_pos, (b, l, 3)
     # calpha_mask, (b, l)
-    prev_calpha_pos = F.pad(calpha_pos[:, :-1], [0, 0, 1, 0])
-    prev2_calpha_pos = F.pad(calpha_pos[:, :-2], [0, 0, 2, 0])
+    prev_calpha_pos = F.pad(calpha_pos[:-1], [0, 0, 1, 0])
+    prev2_calpha_pos = F.pad(calpha_pos[:-2], [0, 0, 2, 0])
 
-    next_calpha_pos = F.pad(calpha_pos[:, 1:], [0, 0, 0, 1])
-    next2_calpha_pos = F.pad(calpha_pos[:, 2:], [0, 0, 0, 2])
+    next_calpha_pos = F.pad(calpha_pos[1:], [0, 0, 0, 1])
+    next2_calpha_pos = F.pad(calpha_pos[2:], [0, 0, 0, 2])
 
     # (b, l, 3x3), (b, l, 3)
     left_gt_frames = r3_utils.rigids_from_3_points(
@@ -58,6 +59,35 @@ def get_encoded_features(data_object: dict):
     return data_object
 
 
+def get_encoded_distances(
+        data_object: dict,
+        min_bin: float = 2.0,
+        max_bin: float = 12.0,
+        num_bins: int = 20,
+):
+    bb_positions = torch.cat([data_object['atom14_gt_positions'][:,:4], data_object['pseudo_beta'][:,None]], dim=-2)
+    bb_mask = torch.cat([data_object['atom14_gt_exists'][:,:4], data_object['pseudo_beta_mask'][:,None]], dim=-1)
+
+    breaks = torch.linspace(min_bin, max_bin, num_bins - 1)
+    sq_breaks = torch.square(breaks)
+
+    dist2 = r3_utils.point_square_distance(
+            rearrange(bb_positions, 'l n r -> l () n () r'),
+            rearrange(bb_positions, 'l n r -> () l () n r'))
+
+    dist2 = rearrange(dist2, 'i j m n -> i j (m n) ()')
+    dist_bin = torch.sum(dist2 > sq_breaks, dim=-1)
+
+    atom_mask = rearrange(
+        rearrange(bb_mask, 'i a -> i () a ()') * rearrange(bb_mask, 'j c -> () j () c'),
+        'i j a c -> i j (a c)')
+
+    data_object['dist_one_hot'] = rearrange(
+        F.one_hot(dist_bin, num_classes=num_bins).to(dtype=dist2.dtype) * atom_mask[...,None],
+        'i j n d -> i j (n d)')
+    return data_object
+
+
 class ProteinTransform:
     def __init__(self,
                  unit: Optional[str] = 'angstrom',
@@ -81,8 +111,9 @@ class ProteinTransform:
         self.recenter_and_scale = recenter_and_scale
         self.eps = eps
 
-    def __call__(self, chain_feats, ccd_atom14):
+    def __call__(self, chain_feats):
         chain_feats = self.patch_feats(chain_feats)
+        chain_feats.pop('chain_ids')
 
         if self.strip_missing_residues:
             chain_feats = self.strip_ends(chain_feats)
@@ -96,6 +127,10 @@ class ProteinTransform:
 
         # Add extra features from AF2
         chain_feats = self.protein_data_transform(chain_feats)
+
+        # Add features for encoder
+        chain_feats = get_encoded_frames(chain_feats)
+        chain_feats = get_encoded_distances(chain_feats)
 
         return chain_feats
 
@@ -207,10 +242,6 @@ class ProteinDataset(torch.nn.utils.Dataset):
             dist_one_hot
             left_gt_calpha3_frame_positions
             right_gt_calpha3_frame_positions
-
-            # recycle_features
-            prev_seq
-            prev_pair
         """
 
         data_path = self._data[idx]
