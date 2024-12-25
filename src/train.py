@@ -12,7 +12,10 @@ from src.data.dataset import ProteinDataset, ProteinTransform
 from src.model.integral import FoldEmbedder
 from src.model.loss import ScoreMatchingLoss
 from src.utils.ddp_utils import DIST_WRAPPER, seed_everything
-from src.utils.model_utils import get_optimizer, get_dataloader
+from src.utils.model_utils import (
+    get_optimizer,
+    get_lr_scheduler,
+    get_dataloader)
 
 
 def main(args):
@@ -56,6 +59,7 @@ def main(args):
             static_graph=True,
         )
     optimizer = get_optimizer(args.optimizer, model)
+    scheduler = get_lr_scheduler(args.scheduler, optimizer)
 
     # instantiate dataset
     dataset = ProteinDataset(
@@ -101,9 +105,10 @@ def main(args):
                 out_batch = model(batch)
                 loss = loss(out_batch, batch)
 
-                optimizer.zero_grad()
+                optimizer.zero_grad(set_to_none=True)
                 loss.backward()
                 optimizer.step()
+                scheduler.step()
 
                 step_loss = loss.item()
                 epoch_loss += step_loss
