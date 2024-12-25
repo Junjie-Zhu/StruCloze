@@ -48,30 +48,46 @@ def aggregate_features(
 
 
 def get_optimizer(
-        configs: dict,
+        configs,
         model: nn.Module,
 ):
     optimizer = torch.optim.Adam(
         model.parameters(),
-        lr=configs['lr'],
-        weight_decay=configs['weight_decay'],
-        betas=(configs['beta1'], configs['beta2']),
+        lr=configs.lr,
+        weight_decay=configs.weight_decay,
+        betas=(configs.beta1, configs.beta2),
     )
     return optimizer
 
 
 def get_lr_scheduler(
-        configs: dict,
+        configs,
         optimizer: torch.optim.Optimizer,
 ):
     scheduler = AlphaFold3LRScheduler(
         optimizer,
-        lr=configs['lr'],
-        warmup_steps=configs['warmup_steps'],
-        decay_every_n_steps=configs['decay_every_n_steps'],
-        decay_factor=configs['decay_factor'],
+        lr=configs.lr,
+        warmup_steps=configs.warmup_steps,
+        decay_every_n_steps=configs.decay_every_n_steps,
+        decay_factor=configs.decay_factor,
     )
     return scheduler
+
+
+def get_dataloader(
+        configs,
+        dataset: torch.utils.data.Dataset,
+):
+    train_loader = torch.utils.data.DataLoader(
+        dataset,
+        batch_size=configs.batch_size,
+        shuffle=True,
+        num_workers=configs.num_workers,
+        pin_memory=True,
+        drop_last=True,
+    )
+    test_loader = torch.utils.data.DataLoader(dataset)
+    return train_loader, test_loader
 
 
 class AlphaFold3LRScheduler(LRScheduler):

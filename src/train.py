@@ -5,6 +5,7 @@ import datetime
 
 import torch
 import torch.distributed as dist
+from networkx import config
 from torch.nn.parallel import DistributedDataParallel as DDP
 from tqdm import tqdm
 
@@ -74,6 +75,7 @@ def main(args):
         training=args.data.training,  # not implemented
     )
     train_loader, test_loader = get_dataloader(
+        configs=args.data.dataloader,
         dataset=dataset,
     )
 
