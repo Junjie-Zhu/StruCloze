@@ -9,6 +9,7 @@ from torch.nn.parallel import DistributedDataParallel as DDP
 
 from src.data.dataset import ProteinDataset, ProteinTransform
 from src.model.integral import FoldEmbedder
+from src.model.loss import ScoreMatchingLoss
 from src.utils.ddp_utils import DIST_WRAPPER, seed_everything
 from src.utils.model_utils import get_optimizer, get_dataloader
 
@@ -70,3 +71,47 @@ def main(args):
     train_loader, test_loader = get_dataloader(
         dataset=dataset,
     )
+
+    # instantiate loss
+    loss = ScoreMatchingLoss(args.loss)
+
+    # main train/eval loop
+    for crt_epoch in range(1, args.epochs + 1):
+
+        # train
+        for crt_step, batch in enumerate(train_loader):
+            model.train()
+
+            batch = to_device(batch, device)
+            out_batch = model(batch)
+            loss = loss(out_batch, batch)
+
+            optimizer.zero_grad()
+            loss.backward()
+            optimizer.step()
+
+            # to implement progress bar
+        for crt_val_step, val_batch in enumerate(test_loader):
+            model.eval()
+            val_batch = to_device(val_batch, device)
+            with torch.no_grad():
+                out_batch = model(val_batch)
+                loss = loss(out_batch, val_batch)
+            # to implement progress bar
+        # to implement checkpoint saving
+        # to implement logging
+
+
+def to_device(obj, device):
+    """Move tensor or dict of tensors to device"""
+    if isinstance(obj, dict):
+        for k, v in obj.items():
+            if isinstance(v, dict):
+                to_device(v, device)
+            elif isinstance(v, torch.Tensor):
+                obj[k] = obj[k].to(device)
+    elif isinstance(obj, torch.Tensor):
+        obj = obj.to(device)
+    else:
+        raise Exception(f"type {type(obj)} not supported")
+    return obj
