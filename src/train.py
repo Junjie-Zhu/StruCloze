@@ -6,6 +6,7 @@ import datetime
 import torch
 import torch.distributed as dist
 from torch.nn.parallel import DistributedDataParallel as DDP
+from tqdm import tqdm
 
 from src.data.dataset import ProteinDataset, ProteinTransform
 from src.model.integral import FoldEmbedder
@@ -75,31 +76,84 @@ def main(args):
     # instantiate loss
     loss = ScoreMatchingLoss(args.loss)
 
-    # main train/eval loop
+    # Initialize variables for storing loss data
+    step_losses, epoch_losses, val_losses = [], [], []
+    if args.logging_dir is not None:
+        with open(f"{args.logging_dir}/loss.csv", "w") as f:
+            f.write("Epoch,Loss,Val Loss\n")
+
+    # Main train/eval loop
     for crt_epoch in range(1, args.epochs + 1):
+        epoch_loss, epoch_val_loss = 0, 0
+        model.train()
 
-        # train
-        for crt_step, batch in enumerate(train_loader):
-            model.train()
+        # Training loop with dynamic progress bar
+        with tqdm(
+                enumerate(train_loader),
+                desc=f"Epoch {crt_epoch}/{args.epochs} "
+                     f"| Step Loss N/A "
+                     f"| Val Loss N/A",
+                total=len(train_loader),
+                ncols=100,  # Adjust width of the progress bar
+        ) as pbar:
+            for crt_step, batch in pbar:
+                batch = to_device(batch, device)
+                out_batch = model(batch)
+                loss = loss(out_batch, batch)
 
-            batch = to_device(batch, device)
-            out_batch = model(batch)
-            loss = loss(out_batch, batch)
+                optimizer.zero_grad()
+                loss.backward()
+                optimizer.step()
 
-            optimizer.zero_grad()
-            loss.backward()
-            optimizer.step()
+                step_loss = loss.item()
+                epoch_loss += step_loss
+                step_losses.append(step_loss)
 
-            # to implement progress bar
-        for crt_val_step, val_batch in enumerate(test_loader):
-            model.eval()
-            val_batch = to_device(val_batch, device)
-            with torch.no_grad():
-                out_batch = model(val_batch)
-                loss = loss(out_batch, val_batch)
-            # to implement progress bar
-        # to implement checkpoint saving
-        # to implement logging
+                # Update the progress bar dynamically
+                pbar.set_postfix(step_loss=f"{step_loss:.3f}", epoch_loss=f"{epoch_loss / (crt_step + 1):.3f}")
+
+            # Calculate average epoch loss
+            epoch_loss /= (crt_step + 1)
+            epoch_losses.append(epoch_loss)
+
+        # Validation loop with dynamic progress bar
+        model.eval()
+        with tqdm.tqdm(
+                enumerate(test_loader),
+                desc=f"Val {crt_epoch} | Epoch Loss {epoch_loss:.3f}",
+                total=len(test_loader),
+                ncols=100,  # Adjust width of the progress bar
+        ) as val_pbar:
+            for crt_val_step, val_batch in val_pbar:
+                val_batch = to_device(val_batch, device)
+                with torch.no_grad():
+                    out_batch = model(val_batch)
+                    val_loss = loss(out_batch, val_batch)
+
+                step_val_loss = val_loss.item()
+                epoch_val_loss += step_val_loss
+                val_losses.append(step_val_loss)
+
+                # Update the validation progress bar dynamically
+                val_pbar.set_postfix(val_loss=f"{step_val_loss:.3f}",
+                                     epoch_val_loss=f"{epoch_val_loss / (crt_val_step + 1):.3f}")
+
+            # Calculate average validation loss
+            epoch_val_loss /= (crt_val_step + 1)
+
+        # Optionally save the loss data to a file after each epoch
+        with open(f"{args.logging_dir}/loss.csv", "a") as f:
+            f.write(f"{crt_epoch},{epoch_loss},{epoch_val_loss}\n")
+
+        # Implement checkpoint saving
+        if crt_epoch % args.checkpoint_interval == 0 or crt_epoch == args.epochs:
+            checkpoint_path = f"checkpoint_epoch_{crt_epoch}.pth"
+            torch.save({
+                'epoch': crt_epoch,
+                'model_state_dict': model.state_dict(),
+                'optimizer_state_dict': optimizer.state_dict(),
+                'loss': epoch_loss,
+            }, checkpoint_path)
 
 
 def to_device(obj, device):
