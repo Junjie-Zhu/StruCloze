@@ -16,6 +16,7 @@
 from functools import partial
 from typing import List
 
+
 import torch
 import torch.nn as nn
 
@@ -27,19 +28,18 @@ def inflate_array_like(array, target):
     Args:
         array: (B, )
         target: (B, ...)
-
+        
     Returns:
         array: (B, ...)
     """
-    if isinstance(array, float):
+    if isinstance(array, float): 
         return array
-
+    
     diff_dims = target.ndim - array.ndim
     assert diff_dims >= 0, f'Error: target.ndim {target.ndim} < array.ndim {array.ndim}'
     if diff_dims == 0:
         return array
-    assert target.shape[:array.ndim] == array.shape[
-                                        :array.ndim], f'Error: target.shape[:array.ndim] {target.shape[:array.ndim]} != array.shape[:array.ndim] {array.shape[:array.ndim]}'
+    assert target.shape[:array.ndim] == array.shape[:array.ndim], f'Error: target.shape[:array.ndim] {target.shape[:array.ndim]} != array.shape[:array.ndim] {array.shape[:array.ndim]}'
     return array[(...,) + (None,) * diff_dims]
 
 
@@ -48,15 +48,12 @@ def permute_final_dims(tensor: torch.Tensor, inds: List[int]):
     first_inds = list(range(len(tensor.shape[:zero_index])))
     return tensor.permute(first_inds + [zero_index + i for i in inds])
 
-
 def flatten_final_dims(t: torch.Tensor, no_dims: int):
     return t.reshape(t.shape[:-no_dims] + (-1,))
 
-
-def sum_except_batch(t: torch.Tensor, batch_dims: int = 1):
+def sum_except_batch(t: torch.Tensor, batch_dims: int=1):
     return t.reshape(t.shape[:batch_dims] + (-1,)).sum(dim=-1)
-
-
+    
 def masked_mean(mask, value, dim, eps=1e-4):
     mask = mask.expand(*value.shape)
     return torch.sum(mask * value, dim=dim) / (eps + torch.sum(mask, dim=dim))
@@ -134,7 +131,6 @@ def tree_map(fn, tree, leaf_type):
 
 
 tensor_tree_map = partial(tree_map, leaf_type=torch.Tensor)
-
 
 def _fetch_dims(tree):
     shapes = []

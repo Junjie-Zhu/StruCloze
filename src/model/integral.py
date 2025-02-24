@@ -1,144 +1,147 @@
-import math
-from functools import partial
+from typing import Optional, Union
 
 import torch
 import torch.nn as nn
 
-from src.model.components.encoder import EmbeddingAndSeqformer
-from src.model.components.decoder import DenoisingNet
-from src.model.components.decoder_layers import Linear
-from src.utils.all_atom import calc_distogram
-from src.utils.model_utils import aggregate_features
-
-
-def get_positional_embedding(indices, embedding_dim, max_len=2056):
-    """Creates sine / cosine positional embeddings from a prespecified indices.
-
-    Args:
-        indices: offsets of size [..., N_edges] of type integer
-        max_len: maximum length.
-        embedding_dim: dimension of the embeddings to create
-
-    Returns:
-        positional embedding of shape [N, embedding_dim]
-    """
-    K = torch.arange(embedding_dim//2, device=indices.device)
-    pos_embedding_sin = torch.sin(
-        indices[..., None] * math.pi / (max_len**(2*K[None]/embedding_dim))).to(indices.device)
-    pos_embedding_cos = torch.cos(
-        indices[..., None] * math.pi / (max_len**(2*K[None]/embedding_dim))).to(indices.device)
-    pos_embedding = torch.cat([
-        pos_embedding_sin, pos_embedding_cos], axis=-1)
-    return pos_embedding
-
+from src.model.components.transformer import (AtomAttentionEncoder,
+                                              AtomAttentionDecoder,
+                                              DiffusionTransformer)
+from src.model.components.primitives import LinearNoBias, LayerNorm
 
 class FoldEmbedder(nn.Module):
-    def __init__(self,
-                 encoder_config: dict,
-                 latent_config: dict,
-                 decoder_config: dict,
-                 self_conditioning: bool = True,
-                 ):
+    def __init__(
+        self,
+        c_atom: int = 128,
+        c_atompair: int = 16,
+        c_token: int = 768,
+        c_s: int = 384,
+        c_z: int = 128,
+        n_atom_layers: int = 3,
+        n_token_layers: int = 16,
+        n_atom_attn_heads: int = 4,
+        n_token_attn_heads: int = 8,
+        initialization: Optional[dict[str, Union[str, float, bool]]] = None,
+    ):
         super(FoldEmbedder, self).__init__()
 
-        self.encoder = EmbeddingAndSeqformer(encoder_config)
-        self.decoder = DenoisingNet(decoder_config)
-
-        self.latent_c = latent_config
-        self.condition = self_conditioning
-
-        if self.latent_c['use_pair'] == 'False':
-            self.latent_transform = nn.Sequential(
-                Linear(self.latent_c['in_dim'], self.latent_c['lat_dim'], bias=False),
-                nn.Tanh()
-            )
-        else:
-            # graph-like update single repr.
-            self.graph_transform = nn.Sequential(
-                Linear(self.latent_c['in_dim'] * 2 + self.latent_c['edge_in_dim'], self.latent_c['lat_dim'], bias=False),
-                nn.ReLU(),
-            )
-            self.latent_transform = nn.Sequential(
-                Linear(self.latent_c['lat_dim'], self.latent_c['lat_dim'], bias=False),
-                nn.Tanh()
-            )
-
-        self.position_embed = partial(
-            get_positional_embedding, embedding_dim=self.latent_c['pos_embed_dim']
+        self.atom_encoder = AtomAttentionEncoder(
+            c_token=c_token,
+            c_atom=c_atom,
+            c_atompair=c_atompair,
+            c_s=c_s,
+            c_z=c_z,
+            n_blocks=n_atom_layers,
+            n_heads=n_atom_attn_heads,
+            n_queries=32,
+            n_keys=128,  # parameters for local attention, typically not changed
         )
-        self.distogram_embed = partial(
-            calc_distogram,
-            min_bin=self.latent_c['min_bin'],
-            max_bin=self.latent_c['max_bin'],
-            num_bins=self.latent_c['num_bins']
+        self.token_transformer = DiffusionTransformer(
+            c_a=c_token,
+            c_s=c_s,
+            c_z=c_z,
+            n_blocks=n_token_layers,
+            n_heads=n_token_attn_heads,
+        )
+        self.atom_decoder = AtomAttentionDecoder(
+            c_token=c_token,
+            c_atom=c_atom,
+            c_atompair=c_atompair,
+            n_blocks=n_atom_layers,
+            n_heads=n_atom_attn_heads,
+            n_queries=32,
+            n_keys=128,  # parameters for local attention, typically not changed
         )
 
-        self.latent_decode = nn.Sequential(
-            Linear(self.latent_c['lat_dim'], self.latent_c['out_dim'], bias=False),
-            nn.ReLU(),
-            Linear(self.latent_c['out_dim'], self.latent_c['out_dim']),
-            nn.ReLU()
+        # connecting layers
+        self.layernorm_s = LayerNorm(c_s)
+        self.linear_no_bias_s = LinearNoBias(in_features=c_s, out_features=c_token)
+        self.layernorm_a = LayerNorm(c_token)
+
+        # initialize parameters
+        self.init_parameters(initialization)
+
+    def init_parameters(self, initialization: dict):
+        """
+        Initializes the parameters of the diffusion module according to the provided initialization configuration.
+
+        Args:
+            initialization (dict): A dictionary containing initialization settings.
+        """
+        if initialization.get("zero_init_condition_transition", False):
+            self.diffusion_conditioning.transition_z1.zero_init()
+            self.diffusion_conditioning.transition_z2.zero_init()
+            self.diffusion_conditioning.transition_s1.zero_init()
+            self.diffusion_conditioning.transition_s2.zero_init()
+
+        self.atom_attention_encoder.linear_init(
+            zero_init_atom_encoder_residual_linear=initialization.get(
+                "zero_init_atom_encoder_residual_linear", False
+            ),
+            he_normal_init_atom_encoder_small_mlp=initialization.get(
+                "he_normal_init_atom_encoder_small_mlp", False
+            ),
+            he_normal_init_atom_encoder_output=initialization.get(
+                "he_normal_init_atom_encoder_output", False
+            ),
         )
 
-        self.latent_edge_decode = nn.Sequential(
-            Linear(self.latent_c['edge_lat_dim'], self.latent_c['edge_out_dim'], bias=False),
-            nn.ReLU(),
-            Linear(self.latent_c['edge_out_dim'], self.latent_c['edge_out_dim']),
-            nn.ReLU()
+        if initialization.get("glorot_init_self_attention", False):
+            for (
+                    block
+            ) in (
+                    self.atom_attention_encoder.atom_transformer.diffusion_transformer.blocks
+            ):
+                block.attention_pair_bias.glorot_init()
+
+        for block in self.diffusion_transformer.blocks:
+            if initialization.get("zero_init_adaln", False):
+                block.attention_pair_bias.layernorm_a.zero_init()
+                block.conditioned_transition_block.adaln.zero_init()
+            if initialization.get("zero_init_residual_condition_transition", False):
+                nn.init.zeros_(
+                    block.conditioned_transition_block.linear_nobias_b.weight
+                )
+
+        if initialization.get("zero_init_atom_decoder_linear", False):
+            nn.init.zeros_(self.atom_attention_decoder.linear_no_bias_a.weight)
+
+        if initialization.get("zero_init_dit_output", False):
+            nn.init.zeros_(self.atom_attention_decoder.linear_no_bias_out.weight)
+
+    def forward(
+        self,
+        initial_positions: torch.Tensor,
+        input_feature_dict: dict[str, Union[torch.Tensor, int, float, dict]],
+    ) -> torch.Tensor:
+
+        # encode token-level features
+        s_single, z_pair = 0, 0  ## to be replaced with actual values
+
+        # encode atom-level features
+        a_token, q_skip, c_skip, p_skip = self.atom_attention_encoder(
+            input_feature_dict=input_feature_dict,
+            r_l=initial_positions,  # structure constructed on CG repr.
+            s=s_single,
+            z=z_pair,
         )
 
-    def forward(self, batch):
-        batch_size, num_node = batch['residue_index'].shape
-
-        s_encode, z_encode = self.encoder(batch)
-
-        if self.latent_c['use_pair'] == 'False':
-            s_encode = self.latent_transform(s_encode)
-        else:
-            s_encode_ = torch.zeros_like(s_encode)
-            s_encode = aggregate_features(s_encode, batch['edge_index'], z_encode)
-            s_encode = self.graph_transform(s_encode)
-
-            s_encode_.scatter_add_(
-                src=s_encode,
-                dim=1,
-                index=batch['edge_index'].reshape(
-                    batch_size, num_node, 1
-                ).expand(batch_size, num_node, s_encode.shape[-1])
-            )
-            s_encode = self.latent_decode(s_encode_)
-
-        # positional embedding on residue index
-        s_decode = self.latent_decode(torch.cat([
-            self.position_embed(batch['residue_index']),
-            s_encode,
-        ], dim=-1))
-
-        z_decode = []
-
-        relative_position_embed = (
-            batch['residue_index'][:, :, None] - batch['residue_index'][:, None, :]
-        ).reshape(
-            [batch_size, num_node ** 2]
+        # attention on token-level
+        a_token = a_token + self.linear_no_bias_s(
+            self.layernorm_s(s_single)
+        )  # [..., N_sample, N_token, c_token]
+        a_token = self.diffusion_transformer(
+            a=a_token,
+            s=s_single,
+            z=z_pair,
         )
-        z_decode.append(self.position_embed(relative_position_embed))
+        a_token = self.layernorm_a(a_token)
 
-        z_init = torch.cat([
-            torch.tile(s_encode[:, :, None, :], (1, 1, num_node, 1)),
-            torch.tile(s_encode[:, None, :, :], (1, num_node, 1, 1))
-        ], dim=-1).float().reshape([batch_size, num_node ** 2, -1])
-        z_decode.append(z_init)
-
-        if self.condition:
-            z_decode.append(
-                self.distogram_embed(batch['condition_ca']).reshape([batch_size, num_node ** 2, -1])
-            )
-        z_decode = self.latent_edge_decode(torch.cat(z_decode, dim=-1))
-
-        output_dict = self.decoder(s_decode, z_decode, batch)
-        output_dict.update(
-            {'s_encode': s_encode,}
+        # decode atom-level features
+        r_update = self.atom_attention_decoder(
+            input_feature_dict=input_feature_dict,
+            a=a_token,
+            q_skip=q_skip,
+            c_skip=c_skip,
+            p_skip=p_skip,
         )
-
-        return output_dict
-
+        return r_update

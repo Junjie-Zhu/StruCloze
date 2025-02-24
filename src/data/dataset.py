@@ -3,214 +3,145 @@ import pickle
 from functools import lru_cache
 from pathlib import Path
 from typing import Union, Optional, Sequence, Dict, List
-import tree
 
 import numpy as np
 import pandas as pd
 import torch
-import torch.nn.functional as F
-from einops import rearrange
 
-from src.utils import residue_constants, data_transforms, r3_utils
+DATA_MAPPING = {
+    'atom_positions': torch.float32,
+    'atom_mask': torch.long,
+    'atom_to_token_index': torch.long,
 
-CA_IDX = residue_constants.atom_order['CA']
-DTYPE_MAPPING = {
-    'aatype': torch.long,
-    'atom_positions': torch.double,
-    'atom_mask': torch.double,
+    'aatype': torch.int32,
+    'moltype': torch.int32,
+    'chain_index': torch.int32,
+    'residue_index': torch.int32,
+    'token_index': torch.int32,
+
+    'ref_positions': torch.float32,
+    'ref_mask': torch.long,
+    'ref_element': torch.int32,
+    'ref_atom_name_chars': torch.int32,
 }
 
 
-def get_encoded_frames(data_object: dict):
-    calpha_pos = data_object['atom_positions'][:, CA_IDX]
-
-    # calpha_pos, (b, l, 3)
-    # calpha_mask, (b, l)
-    prev_calpha_pos = F.pad(calpha_pos[:-1], [0, 0, 1, 0])
-    prev2_calpha_pos = F.pad(calpha_pos[:-2], [0, 0, 2, 0])
-
-    next_calpha_pos = F.pad(calpha_pos[1:], [0, 0, 0, 1])
-    next2_calpha_pos = F.pad(calpha_pos[2:], [0, 0, 0, 2])
-
-    # (b, l, 3x3), (b, l, 3)
-    left_gt_frames = r3_utils.rigids_from_3_points(
-        point_on_neg_x_axis=prev_calpha_pos,
-        origin=calpha_pos,
-        point_on_xy_plane=prev2_calpha_pos)
-
-    left_forth_atom_rel_pos = r3_utils.rigids_mul_vecs(
-        r3_utils.invert_rigids(left_gt_frames),
-        next_calpha_pos)
-
-    right_gt_frames = r3_utils.rigids_from_3_points(
-        point_on_neg_x_axis=next_calpha_pos,
-        origin=calpha_pos,
-        point_on_xy_plane=next2_calpha_pos)
-
-    right_forth_atom_rel_pos = r3_utils.rigids_mul_vecs(
-        r3_utils.invert_rigids(right_gt_frames),
-        prev_calpha_pos)
-
-    ret = {
-        'left_gt_calpha3_frame_positions': left_forth_atom_rel_pos,
-        'right_gt_calpha3_frame_positions': right_forth_atom_rel_pos,
-    }
-    data_object.update(ret)
-    return data_object
-
-
-def get_encoded_distances(
-        data_object: dict,
-        min_bin: float = 2.0,
-        max_bin: float = 12.0,
-        num_bins: int = 20,
-):
-    bb_positions = torch.cat([data_object['atom14_gt_positions'][:,:4], data_object['pseudo_beta'][:,None]], dim=-2)
-    bb_mask = torch.cat([data_object['atom14_gt_exists'][:,:4], data_object['pseudo_beta_mask'][:,None]], dim=-1)
-
-    breaks = torch.linspace(min_bin, max_bin, num_bins - 1)
-    sq_breaks = torch.square(breaks)
-
-    dist2 = r3_utils.point_square_distance(
-            rearrange(bb_positions, 'l n r -> l () n () r'),
-            rearrange(bb_positions, 'l n r -> () l () n r'))
-
-    dist2 = rearrange(dist2, 'i j m n -> i j (m n) ()')
-    dist_bin = torch.sum(dist2 > sq_breaks, dim=-1)
-
-    atom_mask = rearrange(
-        rearrange(bb_mask, 'i a -> i () a ()') * rearrange(bb_mask, 'j c -> () j () c'),
-        'i j a c -> i j (a c)')
-
-    data_object['dist_one_hot'] = rearrange(
-        F.one_hot(dist_bin, num_classes=num_bins).to(dtype=dist2.dtype) * atom_mask[...,None],
-        'i j n d -> i j (n d)')
-    return data_object
-
-
-class ProteinTransform:
+class FeatureTransform:
     def __init__(self,
-                 unit: Optional[str] = 'angstrom',
-                 truncate_length: Optional[int] = None,
-                 strip_missing_residues: bool = True,
-                 recenter_and_scale: bool = True,
-                 eps: float = 1e-8,
-                 ):
-        if unit == 'angstrom':
-            self.coordinate_scale = 1.0
-        elif unit in ('nm', 'nanometer'):
-            self.coordiante_scale = 0.1
-        else:
-            raise ValueError(f"Invalid unit: {unit}")
-
-        if truncate_length is not None:
-            assert truncate_length > 0, f"Invalid truncate_length: {truncate_length}"
-        self.truncate_length = truncate_length
-
-        self.strip_missing_residues = strip_missing_residues
-        self.recenter_and_scale = recenter_and_scale
+                 truncate_size: int = 384,
+                 recenter_atoms: bool = True,
+                 eps: float = 1e-6,
+    ):
+        self.truncate_size = truncate_size
+        self.recenter_atoms = recenter_atoms
         self.eps = eps
 
-    def __call__(self, chain_feats):
-        chain_feats = self.patch_feats(chain_feats)
-        chain_feats.pop('chain_ids')
+    def __call__(self, data_object):
+        atom_object, token_object = self.patch_feature(data_object)
 
-        if self.strip_missing_residues:
-            chain_feats = self.strip_ends(chain_feats)
-        if self.truncate_length is not None:
-            chain_feats = self.random_truncate(chain_feats, max_len=self.truncate_length)
-        # Recenter and scale atom positions
-        if self.recenter_and_scale:
-            chain_feats = self.recenter_and_scale_coords(chain_feats, coordinate_scale=self.coordinate_scale, eps=self.eps)
-        # Map to torch Tensor
-        chain_feats = self.map_to_tensors(chain_feats)
+        if self.truncate_size is not None:
+            atom_object, token_object = self.truncate(atom_object, token_object, truncate_size=self.truncate_size)
 
-        # Add extra features from AF2
-        chain_feats = self.protein_data_transform(chain_feats)
+        if self.recenter_atoms:
+            atom_object = self.recenter(atom_object, eps=self.eps)
 
-        # Add features for encoder
-        chain_feats = get_encoded_frames(chain_feats)
-        chain_feats = get_encoded_distances(chain_feats)
-
-        return chain_feats
+        data_object = {**atom_object, **token_object}
+        data_object = {k: torch.Tensor(v) for k, v in data_object.items()}
+        data_object = {k: v.to(dtype=DATA_MAPPING[k]) for k, v in data_object.items()}
+        return data_object
 
     @staticmethod
-    def patch_feats(chain_feats):
-        seq_mask = chain_feats['atom_mask'][:, CA_IDX]  # a little hack here
-        residue_idx = chain_feats['residue_index'] - np.min(
-            chain_feats['residue_index'])  # start from 0, possibly has chain break
-        patch_feats = {
-            'seq_mask': seq_mask,
-            'residue_mask': seq_mask,
-            'residue_idx': residue_idx,
-            'fixed_mask': np.zeros_like(seq_mask),
-            'sc_ca_t': np.zeros(seq_mask.shape + (3,)),
+    def patch_feature(data_object):
+        residue_idx = data_object['residue_index'] - np.min(data_object['residue_index'])
+
+        atom_object = {
+            'atom_positions': data_object['atom_positions'],
+            'atom_mask': data_object['atom_mask'],
+            'atom_to_token_index': data_object['atom_to_token_index'],
+            'ref_positions': data_object['ref_positions'],
+            'ref_mask': data_object['ref_mask'],
+            'ref_element': data_object['ref_element'],
+            'ref_atom_name_chars': data_object['ref_atom_name_chars'],
         }
-        chain_feats.update(patch_feats)
-        return chain_feats
+        token_object = {
+            'aatype': data_object['aatype'],
+            'moltype': data_object['moltype'],
+            'chain_index': data_object['chain_index'],
+            'residue_index': residue_idx,
+            'token_index': data_object['token_index'],
+        }
+        return atom_object, token_object
 
     @staticmethod
-    def strip_ends(chain_feats):
-        # Strip missing residues on both ends
-        modeled_idx = np.where(chain_feats['aatype'] != 20)[0]
-        min_idx, max_idx = np.min(modeled_idx), np.max(modeled_idx)
-        chain_feats = tree.map_structure(
-            lambda x: x[min_idx: (max_idx + 1)], chain_feats)
-        return chain_feats
+    def truncate(atom_object, token_object, truncate_size=384):
+        # Prepare output dictionaries as lists for later concatenation
+        cropped_atom_object = {k: [] for k in atom_object}
+        cropped_token_object = {k: [] for k in token_object}
+
+        # Precompute chain indices for each unique chain ID
+        chain_ids = np.unique(token_object['chain_index'])
+        chain_indices = {cid: np.where(token_object['chain_index'] == cid)[0] for cid in chain_ids}
+
+        # Shuffle the chain IDs using numpy's in-place shuffle
+        shuffled_chain_ids = chain_ids.copy()
+        np.random.shuffle(shuffled_chain_ids)
+
+        n_added = 0
+        n_remaining = token_object['token_index'].shape[0]
+
+        for cid in shuffled_chain_ids:
+            indices = chain_indices[cid]
+            chain_size = indices.shape[0]
+            n_remaining -= chain_size
+
+            # Determine crop size limits for the current chain
+            crop_size_max = min(chain_size, truncate_size - n_added)
+            crop_size_min = min(chain_size, max(0, truncate_size - n_added - n_remaining))
+            crop_size = np.random.randint(crop_size_min, crop_size_max + 1)
+            if crop_size <= 2:
+                continue
+            n_added += crop_size
+
+            # Get crop indices for tokens
+            crop_start = np.random.randint(0, chain_size - crop_size + 1)
+            crop_end = crop_start + crop_size
+            token_crop_indices = indices[crop_start:crop_end]
+
+            # Crop token_object for each key using the precomputed indices
+            for k, v in token_object.items():
+                cropped_token_object[k].append(v[token_crop_indices])
+
+            # Determine atom cropping boundaries from token indices
+            crop_atom_start = token_object['token_index'][token_crop_indices[0]]
+            crop_atom_end = token_object['token_index'][token_crop_indices[-1] + 1] \
+                if (token_crop_indices[-1] + 1) < token_object['token_index'].shape[0] \
+                else token_object['token_index'][token_crop_indices[-1]]
+            crop_atom_mask = (atom_object['atom_to_token_index'] >= crop_atom_start) & \
+                             (atom_object['atom_to_token_index'] < crop_atom_end)
+            for k, v in atom_object.items():
+                cropped_atom_object[k].append(v[crop_atom_mask])
+
+            # Stop if the desired total crop size is reached
+            if n_added >= truncate_size:
+                break
+
+        # Concatenate the lists of arrays into single numpy arrays
+        cropped_atom_object = {k: np.concatenate(v, axis=0) for k, v in cropped_atom_object.items()}
+        cropped_token_object = {k: np.concatenate(v, axis=0) for k, v in cropped_token_object.items()}
+
+        return cropped_atom_object, cropped_token_object
 
     @staticmethod
-    def random_truncate(chain_feats, max_len):
-        L = chain_feats['aatype'].shape[0]
-        if L > max_len:
-            # Randomly truncate
-            start = np.random.randint(0, L - max_len + 1)
-            end = start + max_len
-            chain_feats = tree.map_structure(
-                lambda x: x[start: end], chain_feats)
-        return chain_feats
+    def recenter(atom_object, eps=1e-8):
+        atom_center = np.sum(atom_object['atom_positions'], axis=0) / np.sum(atom_object['atom_mask']) + eps  # to be revised to CA centers
+        atom_object['atom_positions'] -= atom_center[None, :]
+        return atom_object
 
     @staticmethod
-    def map_to_tensors(chain_feats):
-        chain_feats = {k: torch.as_tensor(v) for k, v in chain_feats.items()}
-        # Alter dtype
-        for k, dtype in DTYPE_MAPPING.items():
-            if k in chain_feats:
-                chain_feats[k] = chain_feats[k].type(dtype)
-        return chain_feats
+    def get_ref_structure(data_object):
+        return data_object
 
-    @staticmethod
-    def recenter_and_scale_coords(chain_feats, coordinate_scale, eps=1e-8):
-        # recenter and scale atom positions
-        bb_pos = chain_feats['atom_positions'][:, CA_IDX]
-        bb_center = np.sum(bb_pos, axis=0) / (np.sum(chain_feats['seq_mask']) + eps)
-        centered_pos = chain_feats['atom_positions'] - bb_center[None, None, :]
-        scaled_pos = centered_pos * coordinate_scale
-        chain_feats['atom_positions'] = scaled_pos * chain_feats['atom_mask'][..., None]
-        return chain_feats
-
-    @staticmethod
-    def protein_data_transform(chain_feats):
-        chain_feats.update(
-            {
-                "all_atom_positions": chain_feats["atom_positions"],
-                "all_atom_mask": chain_feats["atom_mask"],
-            }
-        )
-        chain_feats = data_transforms.atom37_to_frames(chain_feats)
-        chain_feats = data_transforms.atom37_to_torsion_angles("")(chain_feats)
-        chain_feats = data_transforms.get_backbone_frames(chain_feats)
-        chain_feats = data_transforms.get_chi_angles(chain_feats)
-        chain_feats = data_transforms.make_pseudo_beta("")(chain_feats)
-        chain_feats = data_transforms.make_atom14_masks(chain_feats)
-        chain_feats = data_transforms.make_atom14_positions(chain_feats)
-
-        # Add convenient key
-        chain_feats.pop("all_atom_positions")
-        chain_feats.pop("all_atom_mask")
-        return chain_feats
-
-
-class ProteinDataset(torch.nn.utils.Dataset):
+class TrainingDataset(torch.nn.utils.Dataset):
     def __init__(self,
                  path_to_dataset: Union[str, Path],
                  transform: Optional[callable] = None,
@@ -235,13 +166,15 @@ class ProteinDataset(torch.nn.utils.Dataset):
     def __getitem__(self, idx):
         """
         data_object:
-            seq
-            mask
-            pair_mask
-            chain_id
-            dist_one_hot
-            left_gt_calpha3_frame_positions
-            right_gt_calpha3_frame_positions
+            atom_positions
+            atom_mask
+            atom_to_token_index
+            aatype
+            moltype
+            chain_index
+            residue_index
+            token_index
+            chain_index
         """
 
         data_path = self._data[idx]
