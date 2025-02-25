@@ -7,6 +7,7 @@ from typing import Union, Optional
 import numpy as np
 import pandas as pd
 import torch
+from torch.utils.data import Dataset
 from scipy.spatial.transform import Rotation
 
 import src.common.residue_constants as rc
@@ -16,7 +17,7 @@ DATA_MAPPING = {
     'atom_mask': torch.long,
     'atom_to_token_index': torch.long,
 
-    'aatype': torch.int32,
+    'aatype': torch.int64,
     'moltype': torch.int32,
     'chain_index': torch.int32,
     'residue_index': torch.int32,
@@ -26,19 +27,28 @@ DATA_MAPPING = {
     'ref_mask': torch.long,
     'ref_element': torch.int32,
     'ref_atom_name_chars': torch.int32,
+    'ref_space_uid': torch.long
 }
 
 
 def calc_com(positions, weights=None):
     if weights is None:
         weights = np.ones((positions.shape[0], 1))
-    return np.sum(positions * weights, axis=0) / np.sum(weights)
+    return torch.sum(positions * weights[:, None], dim=0) / torch.sum(weights)
 
 
 def random_rotation(positions):
     # randomly rotate the positions (N, 3)
-    rotation = Rotation.random().as_matrix()
-    return np.dot(positions, rotation.T)
+    r = torch.from_numpy(Rotation.random().as_matrix()).float()
+    x, y, z = torch.unbind(input=positions, dim=-1)
+    return torch.stack(
+        tensors=[
+            r[..., 0, 0] * x + r[..., 0, 1] * y + r[..., 0, 2] * z,
+            r[..., 1, 0] * x + r[..., 1, 1] * y + r[..., 1, 2] * z,
+            r[..., 2, 0] * x + r[..., 2, 1] * y + r[..., 2, 2] * z,
+        ],
+        dim=-1,
+    )
 
 
 class FeatureTransform:
@@ -148,6 +158,11 @@ class FeatureTransform:
         cropped_atom_object = {k: np.concatenate(v, axis=0) for k, v in cropped_atom_object.items()}
         cropped_token_object = {k: np.concatenate(v, axis=0) for k, v in cropped_token_object.items()}
 
+        # Reindex token id and atom_to_token id
+        token_id_mapping = {tid: idx for idx, tid in enumerate(np.unique(cropped_token_object['token_index']))}
+        cropped_token_object['token_index'] = np.array([token_id_mapping[tid] for tid in cropped_token_object['token_index']])
+        cropped_atom_object['atom_to_token_index'] = np.array([token_id_mapping[tid] for tid in cropped_atom_object['atom_to_token_index']])
+
         return cropped_atom_object, cropped_token_object
 
     @staticmethod
@@ -165,7 +180,7 @@ class FeatureTransform:
         for tid, token_mask in token_indices.items():
             ref_pos = data_object['ref_positions'][token_mask]
             atom_pos = data_object['atom_positions'][token_mask]
-            atom_weights = torch.Tensor(
+            atom_weights = torch.tensor(
                 rc.ATOM_WEIGHT_MAPPING[
                     rc.IDX_TO_RESIDUE[data_object['aatype'][tid].item()]
                 ], dtype=torch.float32)
@@ -178,10 +193,11 @@ class FeatureTransform:
             ref_pos = (random_rotation(ref_pos - ref_com[None, :]) + atom_com[None, :]
                        + torch.randn(3)[None, :] * s_trans)  # add a random translation at scale s_trans
             ref_structure.append(ref_pos)
-        data_object['ref_structure'] = torch.cat(ref_structure, dim=0)
+        data_object['ref_structure'] = torch.cat(ref_structure, dim=0).float()
+        data_object['ref_space_uid'] = data_object['atom_to_token_index']  # to revise
         return data_object
 
-class TrainingDataset(torch.nn.utils.Dataset):
+class TrainingDataset(Dataset):
     def __init__(self,
                  path_to_dataset: Union[str, Path],
                  transform: Optional[callable] = None,
@@ -193,7 +209,7 @@ class TrainingDataset(torch.nn.utils.Dataset):
         assert self.path_to_dataset.endswith('.csv'), 'Please provide a metadata in csv'
 
         self._df = pd.read_csv(path_to_dataset)
-        self._df.sort_values('modeled_seq_len', ascending=False)
+        self._df.sort_values('token_num', ascending=False)
         self._data = self._df['processed_path'].tolist()
         self._data = np.asarray(self._data)
 
@@ -207,7 +223,7 @@ class TrainingDataset(torch.nn.utils.Dataset):
         data_path = self._data[idx]
         accession_code = os.path.splitext(os.path.basename(data_path))[0]
 
-        with open(data_path, 'r') as f:
+        with open(data_path, 'rb') as f:
             data_object = pickle.load(f)
 
         if self.transform is not None:

@@ -31,6 +31,7 @@ class FoldEmbedder(nn.Module):
             c_z=c_z,
         )
         self.atom_encoder = AtomAttentionEncoder(
+            has_coords=True,
             c_token=c_token,
             c_atom=c_atom,
             c_atompair=c_atompair,
@@ -79,7 +80,7 @@ class FoldEmbedder(nn.Module):
             self.embedding_module.transition_s1.zero_init()
             self.embedding_module.transition_s2.zero_init()
 
-        self.atom_attention_encoder.linear_init(
+        self.atom_encoder.linear_init(
             zero_init_atom_encoder_residual_linear=initialization.get(
                 "zero_init_atom_encoder_residual_linear", False
             ),
@@ -95,11 +96,11 @@ class FoldEmbedder(nn.Module):
             for (
                     block
             ) in (
-                    self.atom_attention_encoder.atom_transformer.diffusion_transformer.blocks
+                    self.atom_encoder.atom_transformer.diffusion_transformer.blocks
             ):
                 block.attention_pair_bias.glorot_init()
 
-        for block in self.diffusion_transformer.blocks:
+        for block in self.token_transformer.blocks:
             if initialization.get("zero_init_adaln", False):
                 block.attention_pair_bias.layernorm_a.zero_init()
                 block.conditioned_transition_block.adaln.zero_init()
@@ -109,10 +110,10 @@ class FoldEmbedder(nn.Module):
                 )
 
         if initialization.get("zero_init_atom_decoder_linear", False):
-            nn.init.zeros_(self.atom_attention_decoder.linear_no_bias_a.weight)
+            nn.init.zeros_(self.atom_decoder.linear_no_bias_a.weight)
 
         if initialization.get("zero_init_dit_output", False):
-            nn.init.zeros_(self.atom_attention_decoder.linear_no_bias_out.weight)
+            nn.init.zeros_(self.atom_decoder.linear_no_bias_out.weight)
 
     def forward(
         self,
@@ -120,6 +121,7 @@ class FoldEmbedder(nn.Module):
         input_feature_dict: dict[str, Union[torch.Tensor, int, float, dict]],
     ) -> torch.Tensor:
 
+        input_feature_dict['atom_to_token_index'] = input_feature_dict['atom_to_token_index'][0]
         # scaling initial positions to ensure approximately unit variance
         initial_positions = initial_positions / 16.
 

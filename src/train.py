@@ -1,5 +1,8 @@
 import logging
 import os
+from idlelib.help_about import version
+
+import rootutils
 import datetime
 
 import torch
@@ -16,8 +19,10 @@ from src.model.loss import AllLosses
 from src.model.optimizer import get_optimizer, get_lr_scheduler
 from src.utils.ddp_utils import DIST_WRAPPER, seed_everything
 
+rootutils.setup_root(__file__, indicator=".project-root", pythonpath=True)
 
-@hydra.main(config_path="../configs", config_name="config_train")
+
+@hydra.main(version_base="1.3", config_path="../configs", config_name="config_train")
 def main(args: DictConfig):
     # update logging directory with current time
     if not os.path.isdir(args.logging_dir):

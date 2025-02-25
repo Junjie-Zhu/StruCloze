@@ -5,14 +5,14 @@ epochs: 200
 checkpoint_interval: 10  # save checkpoint every n epochs
 seed: 42
 deterministic: False
-logging_dir: "../logs"
+logging_dir: "../logs"  # better absolute path, to revise
 
 resume:
   ckpt_dir: null
   load_model_only: False
 
 data:
-  path_to_dataset: "../data/metadata.csv"
+  path_to_dataset: "../data/metadata.csv"  # better absolute path, to revise
   truncate_size: 384
   recenter_atoms: True
   eps: 1e-8

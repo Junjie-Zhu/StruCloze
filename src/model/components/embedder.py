@@ -4,7 +4,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from src.models.components.primitives import LinearNoBias, Transition, LayerNorm
+from src.model.components.primitives import LinearNoBias, Transition, LayerNorm
 
 
 class RelativePositionEncoding(nn.Module):
@@ -105,7 +105,7 @@ class EmbeddingModule(nn.Module):
         self.transition_z2 = Transition(c_z, n=2)
 
     def forward(self, input_feature_dict):
-        restypes = F.one_hot(input_feature_dict["aatype"])
+        restypes = F.one_hot(input_feature_dict["aatype"], num_classes=30).float()
         s_trunk = self.linear_no_bias_s(restypes)
         s_trunk = s_trunk + self.transition_s1(s_trunk)
         s_trunk = s_trunk + self.transition_s2(s_trunk)

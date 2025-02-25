@@ -5,7 +5,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from src.models.components.primitives import (
+from src.model.components.primitives import (
     LayerNorm,
     AdaptiveLayerNorm,
     Attention,
@@ -565,7 +565,7 @@ class AtomAttentionEncoder(nn.Module):
         self.local_attention_method = "local_cross_attention"
 
         self.input_feature = {
-            "ref_pos": 3,
+            "ref_positions": 3,
             "ref_mask": 1,
             "ref_element": 32,
             "ref_atom_name_chars": 4 * 64,
@@ -699,11 +699,11 @@ class AtomAttentionEncoder(nn.Module):
             assert s is not None
             assert z is not None
 
-        atom_to_token_idx = input_feature_dict["atom_to_token_idx"]
+        atom_to_token_idx = input_feature_dict["atom_to_token_index"]
         # Create the atom single conditioning: Embed per-atom meta data
         # [..., N_atom, C_atom]
-        batch_shape = input_feature_dict["ref_pos"].shape[:-2]
-        N_atom = input_feature_dict["ref_pos"].shape[-2]
+        batch_shape = input_feature_dict["ref_positions"].shape[:-2]
+        N_atom = input_feature_dict["ref_positions"].shape[-2]
 
         c_l = self.linear_no_bias_f(
             torch.cat(
@@ -721,8 +721,8 @@ class AtomAttentionEncoder(nn.Module):
 
         # Prepare tensors in dense trunks for local operations
         q_trunked_list, k_trunked_list, pad_info = rearrange_qk_to_dense_trunk(
-            q=[input_feature_dict["ref_pos"], input_feature_dict["ref_space_uid"]],
-            k=[input_feature_dict["ref_pos"], input_feature_dict["ref_space_uid"]],
+            q=[input_feature_dict["ref_positions"], input_feature_dict["ref_space_uid"]],
+            k=[input_feature_dict["ref_positions"], input_feature_dict["ref_space_uid"]],
             dim_q=[-2, -1],
             dim_k=[-2, -1],
             n_queries=self.n_queries,
@@ -915,7 +915,7 @@ class AtomAttentionDecoder(nn.Module):
         q = (
             self.linear_no_bias_a(
                 broadcast_token_to_atom(
-                    x_token=a, atom_to_token_idx=input_feature_dict["atom_to_token_idx"]
+                    x_token=a, atom_to_token_idx=input_feature_dict["atom_to_token_index"]
                 )  # [..., N_atom, c_token]
             )  # [..., N_atom, c_atom]
             + q_skip
