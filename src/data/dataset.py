@@ -2,11 +2,14 @@ import os
 import pickle
 from functools import lru_cache
 from pathlib import Path
-from typing import Union, Optional, Sequence, Dict, List
+from typing import Union, Optional
 
 import numpy as np
 import pandas as pd
 import torch
+from scipy.spatial.transform import Rotation
+
+import src.common.residue_constants as rc
 
 DATA_MAPPING = {
     'atom_positions': torch.float32,
@@ -24,6 +27,18 @@ DATA_MAPPING = {
     'ref_element': torch.int32,
     'ref_atom_name_chars': torch.int32,
 }
+
+
+def calc_com(positions, weights=None):
+    if weights is None:
+        weights = np.ones((positions.shape[0], 1))
+    return np.sum(positions * weights, axis=0) / np.sum(weights)
+
+
+def random_rotation(positions):
+    # randomly rotate the positions (N, 3)
+    rotation = Rotation.random().as_matrix()
+    return np.dot(positions, rotation.T)
 
 
 class FeatureTransform:
@@ -48,6 +63,7 @@ class FeatureTransform:
         data_object = {**atom_object, **token_object}
         data_object = {k: torch.Tensor(v) for k, v in data_object.items()}
         data_object = {k: v.to(dtype=DATA_MAPPING[k]) for k, v in data_object.items()}
+        data_object = self.get_ref_structure(data_object)
         return data_object
 
     @staticmethod
@@ -74,6 +90,9 @@ class FeatureTransform:
 
     @staticmethod
     def truncate(atom_object, token_object, truncate_size=384):
+        if token_object['token_index'].shape[0] <= truncate_size:
+            return atom_object, token_object
+
         # Prepare output dictionaries as lists for later concatenation
         cropped_atom_object = {k: [] for k in atom_object}
         cropped_token_object = {k: [] for k in token_object}
@@ -138,7 +157,28 @@ class FeatureTransform:
         return atom_object
 
     @staticmethod
-    def get_ref_structure(data_object):
+    def get_ref_structure(data_object, s_trans=1.):
+        # get reference structure for model input
+        ref_structure = []
+
+        token_indices = {tid: torch.where(data_object['atom_to_token_index'] == tid)[0] for tid in data_object['token_index']}
+        for tid, token_mask in token_indices.items():
+            ref_pos = data_object['ref_positions'][token_mask]
+            atom_pos = data_object['atom_positions'][token_mask]
+            atom_weights = torch.Tensor(
+                rc.ATOM_WEIGHT_MAPPING[
+                    rc.IDX_TO_RESIDUE[data_object['aatype'][tid].item()]
+                ], dtype=torch.float32)
+
+            # get center of mass
+            ref_com = calc_com(ref_pos, weights=atom_weights)  # (,3)
+            atom_com = calc_com(atom_pos, weights=atom_weights)  # (,3)
+
+            # get reference structure
+            ref_pos = (random_rotation(ref_pos - ref_com[None, :]) + atom_com[None, :]
+                       + torch.randn(3)[None, :] * s_trans)  # add a random translation at scale s_trans
+            ref_structure.append(ref_pos)
+        data_object['ref_structure'] = torch.cat(ref_structure, dim=0)
         return data_object
 
 class TrainingDataset(torch.nn.utils.Dataset):
@@ -164,19 +204,6 @@ class TrainingDataset(torch.nn.utils.Dataset):
 
     @lru_cache(maxsize=100)
     def __getitem__(self, idx):
-        """
-        data_object:
-            atom_positions
-            atom_mask
-            atom_to_token_index
-            aatype
-            moltype
-            chain_index
-            residue_index
-            token_index
-            chain_index
-        """
-
         data_path = self._data[idx]
         accession_code = os.path.splitext(os.path.basename(data_path))[0]
 
@@ -187,57 +214,5 @@ class TrainingDataset(torch.nn.utils.Dataset):
             data_object = self.transform(data_object)
 
         data_object['accession_code'] = accession_code
-
         return data_object
 
-
-class BatchTensorConverter:
-    """Callable to convert an unprocessed (labels + strings) batch to a
-    processed (labels + tensor) batch.
-    """
-
-    def __init__(self, target_keys: Optional[List] = None):
-        self.target_keys = target_keys
-
-    def __call__(self, raw_batch: Sequence[Dict[str, object]]):
-        B = len(raw_batch)
-        # Only do for Tensor
-        target_keys = self.target_keys \
-            if self.target_keys is not None else [k for k, v in raw_batch[0].items() if torch.is_tensor(v)]
-        # Non-array, for example string, int
-        non_array_keys = [k for k in raw_batch[0] if k not in target_keys]
-        collated_batch = dict()
-        for k in target_keys:
-            collated_batch[k] = self.collate_dense_tensors([d[k] for d in raw_batch], pad_v=0.0)
-        for k in non_array_keys:  # return non-array keys as is
-            collated_batch[k] = [d[k] for d in raw_batch]
-        return collated_batch
-
-    @staticmethod
-    def collate_dense_tensors(samples: Sequence, pad_v: float = 0.0):
-        """
-        Takes a list of tensors with the following dimensions:
-            [(d_11,       ...,           d_1K),
-             (d_21,       ...,           d_2K),
-             ...,
-             (d_N1,       ...,           d_NK)]
-        and stack + pads them into a single tensor of:
-        (N, max_i=1,N { d_i1 }, ..., max_i=1,N {diK})
-        """
-        if len(samples) == 0:
-            return torch.Tensor()
-        if len(set(x.dim() for x in samples)) != 1:
-            raise RuntimeError(
-                f"Samples has varying dimensions: {[x.dim() for x in samples]}"
-            )
-        (device,) = tuple(set(x.device for x in samples))  # assumes all on same device
-        max_shape = [max(lst) for lst in zip(*[x.shape for x in samples])]
-        result = torch.empty(
-            len(samples), *max_shape, dtype=samples[0].dtype, device=device
-        )
-        result.fill_(pad_v)
-        for i in range(len(samples)):
-            result_i = result[i]
-            t = samples[i]
-            result_i[tuple(slice(0, k) for k in t.shape)] = t
-        return result

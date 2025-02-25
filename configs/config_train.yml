@@ -1,0 +1,61 @@
+# configurations for training
+
+batch_size: 4  # batch size on single device
+epochs: 200
+checkpoint_interval: 10  # save checkpoint every n epochs
+seed: 42
+deterministic: False
+logging_dir: "../logs"
+
+resume:
+  ckpt_dir: null
+  load_model_only: False
+
+data:
+  path_to_dataset: "../data/metadata.csv"
+  truncate_size: 384
+  recenter_atoms: True
+  eps: 1e-8
+  prop_train: 0.95
+  shuffle: False
+  num_workers: 8
+  pin_memory: False
+
+model:
+  c_atom: 128
+  c_atompair: 16
+  c_token: 384
+  c_s: 384
+  c_z: 128
+  n_atom_layers: 3
+  n_token_layers: 12
+  n_atom_attn_heads: 4
+  n_token_attn_heads: 8
+  initialization:
+    zero_init_condition_transition: False
+    zero_init_atom_encoder_residual_linear: False
+    he_normal_init_atom_encoder_small_mlp: False
+    he_normal_init_atom_encoder_output: False
+    glorot_init_self_attention: False
+    zero_init_adaln: True
+    zero_init_residual_condition_transition: False
+    zero_init_dit_output: True
+    zero_init_atom_decoder_linear: False
+
+optimizer:
+  lr: 0.0008
+  weight_decay: 0.95
+  beta1: 0.9
+  beta2: 0.999
+  use_adamw: False
+  lr_scheduler: "af3"
+  warmup_steps: 7000
+  decay_every_n_steps: 20000
+  decay_factor: 0.95
+
+loss:
+  weight_mse: 1.0
+  eps: 1e-8
+  reduction: "mean"
+  lddt_enabled: False
+  bond_enabled: False

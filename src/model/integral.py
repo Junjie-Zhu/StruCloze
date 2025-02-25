@@ -7,6 +7,8 @@ from src.model.components.transformer import (AtomAttentionEncoder,
                                               AtomAttentionDecoder,
                                               DiffusionTransformer)
 from src.model.components.primitives import LinearNoBias, LayerNorm
+from src.model.components.embedder import EmbeddingModule
+
 
 class FoldEmbedder(nn.Module):
     def __init__(
@@ -24,6 +26,10 @@ class FoldEmbedder(nn.Module):
     ):
         super(FoldEmbedder, self).__init__()
 
+        self.embedding_module = EmbeddingModule(
+            c_s=c_s,
+            c_z=c_z,
+        )
         self.atom_encoder = AtomAttentionEncoder(
             c_token=c_token,
             c_atom=c_atom,
@@ -68,10 +74,10 @@ class FoldEmbedder(nn.Module):
             initialization (dict): A dictionary containing initialization settings.
         """
         if initialization.get("zero_init_condition_transition", False):
-            self.diffusion_conditioning.transition_z1.zero_init()
-            self.diffusion_conditioning.transition_z2.zero_init()
-            self.diffusion_conditioning.transition_s1.zero_init()
-            self.diffusion_conditioning.transition_s2.zero_init()
+            self.embedding_module.transition_z1.zero_init()
+            self.embedding_module.transition_z2.zero_init()
+            self.embedding_module.transition_s1.zero_init()
+            self.embedding_module.transition_s2.zero_init()
 
         self.atom_attention_encoder.linear_init(
             zero_init_atom_encoder_residual_linear=initialization.get(
@@ -114,8 +120,11 @@ class FoldEmbedder(nn.Module):
         input_feature_dict: dict[str, Union[torch.Tensor, int, float, dict]],
     ) -> torch.Tensor:
 
+        # scaling initial positions to ensure approximately unit variance
+        initial_positions = initial_positions / 16.
+
         # encode token-level features
-        s_single, z_pair = 0, 0  ## to be replaced with actual values
+        s_single, z_pair = self.embedding_module(input_feature_dict)
 
         # encode atom-level features
         a_token, q_skip, c_skip, p_skip = self.atom_attention_encoder(
@@ -144,4 +153,5 @@ class FoldEmbedder(nn.Module):
             c_skip=c_skip,
             p_skip=p_skip,
         )
-        return r_update
+        return r_update * 16.  # rescale back to original scale
+
