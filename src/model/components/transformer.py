@@ -827,7 +827,7 @@ class AtomAttentionEncoder(nn.Module):
         # Aggregate per-atom representation to per-token representation
         a = aggregate_atom_to_token(
             x_atom=F.relu(self.linear_no_bias_q(q_l)),
-            atom_to_token_idx=atom_to_token_idx,
+            atom_to_token_idx=atom_to_token_idx.unsqueeze(1),
             n_token=n_token,
             reduce="mean",
         )  # [..., (N_sample), N_token, c_token]
@@ -915,7 +915,8 @@ class AtomAttentionDecoder(nn.Module):
         q = (
             self.linear_no_bias_a(
                 broadcast_token_to_atom(
-                    x_token=a, atom_to_token_idx=input_feature_dict["atom_to_token_index"]
+                    x_token=a,
+                    atom_to_token_idx=input_feature_dict["atom_to_token_index"].unsqueeze(1)
                 )  # [..., N_atom, c_token]
             )  # [..., N_atom, c_atom]
             + q_skip

@@ -901,7 +901,7 @@ def gather_pair_embedding_in_dense_trunk(
             N_sample = x.shape[1]
             idx_q_expanded = idx_q.unsqueeze(-1).unsqueeze(1).expand(-1, N_sample, -1, -1, N_k)
             idx_k_expanded = idx_k.unsqueeze(-2).unsqueeze(1).expand(-1, N_sample, -1, N_q, -1)
-            b_idx = torch.arange(batch_size, device=x.device).view(batch_size, 1, 1, 1).expand(batch_size, N_sample,
+            b_idx = torch.arange(batch_size, device=x.device).view(batch_size, 1, 1, 1, 1).expand(batch_size, N_sample,
                                                                                                N_b, N_q, N_k)
             s_idx = torch.arange(N_sample, device=x.device).view(1, N_sample, 1, 1, 1).expand(batch_size, N_sample,
                                                                                               N_b, N_q, N_k)

@@ -575,8 +575,7 @@ class AllLosses(nn.Module):
             )
 
         cum_loss = 0
-        for loss_item, loss_fn in losses.items():
-            loss_outputs = loss_fn()
+        for loss_item, loss_outputs in losses.items():
             if isinstance(loss_outputs, tuple):
                 loss, metrics = loss_outputs
             else:
@@ -585,5 +584,19 @@ class AllLosses(nn.Module):
             cum_loss += loss
         return cum_loss
 
-    def forward(self, pred_positions, true_positions):
-        return self.calculate_losses(pred_positions, true_positions)
+    def forward(self,
+                pred_positions,
+                true_positions,
+                single_mask=None,
+                pair_mask=None,
+                lddt_enabled=False,
+                bond_enabled=False
+                ):
+        return self.calculate_losses(
+            pred_positions,
+            true_positions,
+            single_mask=single_mask,
+            pair_mask=pair_mask,
+            lddt_enabled=lddt_enabled,
+            bond_enabled=bond_enabled
+        )

@@ -129,7 +129,7 @@ def main(args: DictConfig):
         logging.info(f"Loaded checkpoint from {args.ckpt_dir}")
 
     # instantiate loss
-    loss = AllLosses(
+    loss_fn = AllLosses(
         weight_mse=args.loss.weight_mse,
         eps=args.loss.eps,
         reduction=args.loss.reduction
@@ -169,7 +169,7 @@ def main(args: DictConfig):
                     initial_positions=init_positions,
                     input_feature_dict=input_feature_dict,
                 )
-                loss = loss(pred_positions,
+                loss = loss_fn(pred_positions,
                     input_feature_dict['atom_positions'],
                     single_mask=input_feature_dict['atom_mask'],
                     lddt_enabled=args.loss.lddt_enabled,
@@ -194,7 +194,7 @@ def main(args: DictConfig):
 
         # Validation loop with dynamic progress bar
         model.eval()
-        with tqdm.tqdm(
+        with tqdm(
                 enumerate(val_loader),
                 desc="Validation",
                 total=len(val_loader),
@@ -211,7 +211,7 @@ def main(args: DictConfig):
                     initial_positions=init_positions,
                     input_feature_dict=val_feature_dict,
                 )
-                val_loss = loss(pred_positions,
+                val_loss = loss_fn(pred_positions,
                     val_feature_dict['atom_positions'],
                     single_mask=val_feature_dict['atom_mask'],
                     lddt_enabled=args.loss.lddt_enabled,
