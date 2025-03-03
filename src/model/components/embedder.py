@@ -24,7 +24,7 @@ class RelativePositionEncoding(nn.Module):
         self.s_max = s_max
         self.c_z = c_z
         self.linear_no_bias = LinearNoBias(
-            in_features=(4 * self.r_max + 2), out_features=self.c_z
+            in_features=(4 * self.r_max + 4), out_features=self.c_z
         )
         self.input_feature = {
             "asym_id": 1,

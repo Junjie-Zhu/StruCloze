@@ -169,9 +169,11 @@ def main(args: DictConfig):
                     initial_positions=init_positions,
                     input_feature_dict=input_feature_dict,
                 )
+
                 loss = loss_fn(pred_positions,
                     input_feature_dict['atom_positions'],
                     single_mask=input_feature_dict['atom_mask'],
+                    pair_mask=input_feature_dict['lddt_mask'],
                     lddt_enabled=args.loss.lddt_enabled,
                     bond_enabled=args.loss.bond_enabled
                 )
@@ -214,6 +216,7 @@ def main(args: DictConfig):
                 val_loss = loss_fn(pred_positions,
                     val_feature_dict['atom_positions'],
                     single_mask=val_feature_dict['atom_mask'],
+                    pair_mask=input_feature_dict['lddt_mask'],
                     lddt_enabled=args.loss.lddt_enabled,
                     bond_enabled=args.loss.bond_enabled
                 )

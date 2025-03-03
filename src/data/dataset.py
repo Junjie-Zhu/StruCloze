@@ -36,8 +36,8 @@ DATA_MAPPING = {
 def get_ccd_features(ccd_code, ccd_info_dict):
     ref_pos = ccd_info_dict[ccd_code]['ref_pos']
     ref_mask = ccd_info_dict[ccd_code]['ref_mask']
-    element = ccd_info_dict[ccd_code]['ref_element']
-    atom_name_chars = ccd_info_dict[ccd_code]['ref_atom_name_chars']
+    element = ccd_info_dict[ccd_code]['element']
+    atom_name_chars = ccd_info_dict[ccd_code]['atom_name_chars']
     return ref_pos, ref_mask, element, atom_name_chars
 
 
@@ -130,6 +130,10 @@ class FeatureTransform:
         data_object = {k: torch.Tensor(v) for k, v in data_object.items()}
         data_object = {k: v.to(dtype=DATA_MAPPING[k]) for k, v in data_object.items()}
         data_object = self.get_ref_structure(data_object)
+
+        # Get LDDT mask
+        distance_matrix = data_object['atom_positions'][:, None, :] - data_object['atom_positions'][None, :, :]
+        data_object['lddt_mask'] = distance_matrix.norm(dim=-1) < 15.0
         return data_object
 
     @staticmethod
@@ -230,6 +234,10 @@ class FeatureTransform:
     def get_ref_structure(self, data_object, s_trans=1.):
         # get reference structure for model input
         ref_structure = []
+        ref_positions = []
+        ref_masks = []
+        ref_elements = []
+        ref_atom_name_chars = []
 
         token_indices = {tid: torch.where(data_object['atom_to_token_index'] == tid)[0] for tid in data_object['token_index']}
         for tid, token_mask in token_indices.items():
@@ -247,11 +255,23 @@ class FeatureTransform:
             atom_com = calc_com(atom_pos, weights=atom_weights)  # (,3)
 
             # get reference structure
-            ref_pos = (random_rotation(ref_pos - ref_com[None, :]) + atom_com[None, :]
+            ref_struc = (random_rotation(ref_pos - ref_com[None, :]) + atom_com[None, :]
                        + torch.randn(3)[None, :] * s_trans)  # add a random translation at scale s_trans
-            ref_structure.append(ref_pos)
-        data_object['ref_structure'] = torch.cat(ref_structure, dim=0).float()
-        data_object['ref_space_uid'] = data_object['atom_to_token_index']  # to revise
+
+            ref_structure.append(ref_struc)
+            ref_positions.append(ref_pos)
+            ref_masks.append(ref_mask)
+            ref_elements.append(element)
+            ref_atom_name_chars.append(atom_name_chars)
+
+        data_object.update({
+            'ref_positions': torch.cat(ref_positions, dim=0).float(),
+            'ref_mask': torch.cat(ref_masks, dim=0).long(),
+            'ref_element': torch.cat(ref_elements, dim=0),
+            'ref_atom_name_chars': torch.cat(ref_atom_name_chars, dim=0),
+            'ref_structure': torch.cat(ref_structure, dim=0).float(),
+            'ref_space_uid': data_object['atom_to_token_index']  # to revise
+        })
         return data_object
 
 class TrainingDataset(Dataset):

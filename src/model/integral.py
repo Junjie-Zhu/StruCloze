@@ -133,7 +133,7 @@ class FoldEmbedder(nn.Module):
         z_pair = z_pair.unsqueeze(1)
 
         # encode atom-level features
-        a_token, q_skip, c_skip, p_skip = self.atom_attention_encoder(
+        a_token, q_skip, c_skip, p_skip = self.atom_encoder(
             input_feature_dict=input_feature_dict,
             r_l=initial_positions,  # structure constructed on CG repr.
             s=s_single,
@@ -144,7 +144,7 @@ class FoldEmbedder(nn.Module):
         a_token = a_token + self.linear_no_bias_s(
             self.layernorm_s(s_single)
         )  # [..., N_sample, N_token, c_token]
-        a_token = self.diffusion_transformer(
+        a_token = self.token_transformer(
             a=a_token,
             s=s_single,
             z=z_pair,
@@ -152,7 +152,7 @@ class FoldEmbedder(nn.Module):
         a_token = self.layernorm_a(a_token)
 
         # decode atom-level features
-        r_update = self.atom_attention_decoder(
+        r_update = self.atom_decoder(
             input_feature_dict=input_feature_dict,
             a=a_token,
             q_skip=q_skip,

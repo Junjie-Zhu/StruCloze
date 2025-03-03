@@ -60,3 +60,5 @@ loss:
   reduction: "mean"
   lddt_enabled: False
   bond_enabled: False
+
+hydra:
