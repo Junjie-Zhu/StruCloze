@@ -1,3 +1,4 @@
+import gzip
 import os
 import pickle
 from functools import lru_cache
@@ -7,6 +8,7 @@ from typing import Union, Optional
 import numpy as np
 import pandas as pd
 import torch
+from biotite.structure.io import pdbx
 from torch.utils.data import Dataset
 from scipy.spatial.transform import Rotation
 
@@ -29,6 +31,56 @@ DATA_MAPPING = {
     'ref_atom_name_chars': torch.int32,
     'ref_space_uid': torch.long
 }
+
+
+def get_ccd_features(ccd_code, ccd_info_dict):
+    ref_pos = ccd_info_dict[ccd_code]['ref_pos']
+    ref_mask = ccd_info_dict[ccd_code]['ref_mask']
+    element = ccd_info_dict[ccd_code]['ref_element']
+    atom_name_chars = ccd_info_dict[ccd_code]['ref_atom_name_chars']
+    return ref_pos, ref_mask, element, atom_name_chars
+
+
+def convert_atom_id_name(atom_names: list[str]):
+    """
+        Converts unique atom_id names to integer of atom_name. need to be padded to length 4.
+        Each character is encoded as ord(c) - 32
+    """
+    onehot_dict = {}
+    for index, key in enumerate(range(64)):
+        onehot = [0] * 64
+        onehot[index] = 1
+        onehot_dict[key] = onehot
+
+    mol_encode = []
+    for atom_name in atom_names:
+        # [4, 64]
+        atom_encode = []
+        for name_str in atom_name.ljust(4):
+            atom_encode.append(onehot_dict[ord(name_str) - 32])
+        mol_encode.append(atom_encode)
+    onehot_tensor = torch.Tensor(mol_encode)
+    return onehot_tensor
+
+
+def convert_atom_name_id(onehot_tensor: torch.Tensor):
+    """
+        Converts integer of atom_name to unique atom_id names.
+        Each character is encoded as chr(c + 32)
+    """
+    # Create reverse mapping from one-hot index to characters
+    index_to_char = {index: chr(key + 32) for key, index in enumerate(range(64))}
+
+    # Extract atom names from the tensor
+    atom_names = []
+    for atom_encode in onehot_tensor:
+        atom_name = ''
+        for char_onehot in atom_encode:
+            index = char_onehot.argmax().item()  # Find the index of the maximum value
+            atom_name += index_to_char[index]
+        atom_names.append(atom_name.strip())  # Remove padding spaces
+
+    return atom_names
 
 
 def calc_com(positions, weights=None):
@@ -56,10 +108,14 @@ class FeatureTransform:
                  truncate_size: int = 384,
                  recenter_atoms: bool = True,
                  eps: float = 1e-6,
+                 ccd_info: str = 'data/ccd_info.pt',
     ):
         self.truncate_size = truncate_size
         self.recenter_atoms = recenter_atoms
         self.eps = eps
+
+        assert ccd_info.endswith('.pt'), 'Please provide a ccd_info in .pt format'
+        self.ccd_info = torch.load(ccd_info)
 
     def __call__(self, data_object):
         atom_object, token_object = self.patch_feature(data_object)
@@ -84,10 +140,10 @@ class FeatureTransform:
             'atom_positions': data_object['atom_positions'],
             'atom_mask': data_object['atom_mask'],
             'atom_to_token_index': data_object['atom_to_token_index'],
-            'ref_positions': data_object['ref_positions'],
-            'ref_mask': data_object['ref_mask'],
-            'ref_element': data_object['ref_element'],
-            'ref_atom_name_chars': data_object['ref_atom_name_chars'],
+            # 'ref_positions': data_object['ref_positions'],
+            # 'ref_mask': data_object['ref_mask'],
+            # 'ref_element': data_object['ref_element'],
+            # 'ref_atom_name_chars': data_object['ref_atom_name_chars'],
         }
         token_object = {
             'aatype': data_object['aatype'],
@@ -144,7 +200,7 @@ class FeatureTransform:
             crop_atom_start = token_object['token_index'][token_crop_indices[0]]
             crop_atom_end = token_object['token_index'][token_crop_indices[-1] + 1] \
                 if (token_crop_indices[-1] + 1) < token_object['token_index'].shape[0] \
-                else token_object['token_index'][token_crop_indices[-1]]
+                else token_object['token_index'][token_crop_indices[-1]] + 1
             crop_atom_mask = (atom_object['atom_to_token_index'] >= crop_atom_start) & \
                              (atom_object['atom_to_token_index'] < crop_atom_end)
             for k, v in atom_object.items():
@@ -159,7 +215,7 @@ class FeatureTransform:
         cropped_token_object = {k: np.concatenate(v, axis=0) for k, v in cropped_token_object.items()}
 
         # Reindex token id and atom_to_token id
-        token_id_mapping = {tid: idx for idx, tid in enumerate(np.unique(cropped_token_object['token_index']))}
+        token_id_mapping = {tid: idx for idx, tid in enumerate(cropped_token_object['token_index'])}
         cropped_token_object['token_index'] = np.array([token_id_mapping[tid] for tid in cropped_token_object['token_index']])
         cropped_atom_object['atom_to_token_index'] = np.array([token_id_mapping[tid] for tid in cropped_atom_object['atom_to_token_index']])
 
@@ -171,14 +227,15 @@ class FeatureTransform:
         atom_object['atom_positions'] -= atom_center[None, :]
         return atom_object
 
-    @staticmethod
-    def get_ref_structure(data_object, s_trans=1.):
+    def get_ref_structure(self, data_object, s_trans=1.):
         # get reference structure for model input
         ref_structure = []
 
         token_indices = {tid: torch.where(data_object['atom_to_token_index'] == tid)[0] for tid in data_object['token_index']}
         for tid, token_mask in token_indices.items():
-            ref_pos = data_object['ref_positions'][token_mask]
+            restype = rc.IDX_TO_RESIDUE[data_object['aatype'][tid].item()]
+
+            ref_pos, ref_mask, element, atom_name_chars = get_ccd_features(restype, self.ccd_info)
             atom_pos = data_object['atom_positions'][token_mask]
             atom_weights = torch.tensor(
                 rc.ATOM_WEIGHT_MAPPING[
@@ -223,7 +280,7 @@ class TrainingDataset(Dataset):
         data_path = self._data[idx]
         accession_code = os.path.splitext(os.path.basename(data_path))[0]
 
-        with open(data_path, 'rb') as f:
+        with gzip.open(data_path, 'rb') as f:
             data_object = pickle.load(f)
 
         if self.transform is not None:

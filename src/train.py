@@ -1,6 +1,5 @@
 import logging
 import os
-from idlelib.help_about import version
 
 import rootutils
 import datetime
@@ -66,6 +65,7 @@ def main(args: DictConfig):
             truncate_size=args.data.truncate_size,
             recenter_atoms=args.data.recenter_atoms,
             eps=args.data.eps,
+            ccd_info=args.data.path_to_ccd_info
         ),
     )
     train_loader, val_loader = get_training_dataloader(

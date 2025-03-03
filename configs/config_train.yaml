@@ -13,6 +13,7 @@ resume:
 
 data:
   path_to_dataset: "../data/metadata.csv"  # better absolute path, to revise
+  path_to_ccd_info: "../data/ccd_info.pt"  # better absolute path, to revise
   truncate_size: 384
   recenter_atoms: True
   eps: 1e-8
