@@ -131,7 +131,7 @@ class FoldEmbedder(nn.Module):
         initial_positions = initial_positions.unsqueeze(1)
         s_single = s_single.unsqueeze(1)
         z_pair = z_pair.unsqueeze(1)
-
+        
         # encode atom-level features
         a_token, q_skip, c_skip, p_skip = self.atom_encoder(
             input_feature_dict=input_feature_dict,

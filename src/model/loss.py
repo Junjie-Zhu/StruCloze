@@ -593,7 +593,7 @@ class AllLosses(nn.Module):
                 bond_enabled=False
                 ):
         return self.calculate_losses(
-            pred_positions,
+            pred_positions, 
             true_positions,
             single_mask=single_mask,
             pair_mask=pair_mask,
