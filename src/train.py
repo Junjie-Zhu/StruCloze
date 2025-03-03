@@ -1,5 +1,6 @@
 import logging
 import os
+import warnings
 
 import rootutils
 import datetime
@@ -17,22 +18,25 @@ from src.model.integral import FoldEmbedder
 from src.model.loss import AllLosses
 from src.model.optimizer import get_optimizer, get_lr_scheduler
 from src.utils.ddp_utils import DIST_WRAPPER, seed_everything
+from src.utils.model_utils import centre_random_augmentation
 
 rootutils.setup_root(__file__, indicator=".project-root", pythonpath=True)
+warnings.filterwarnings("ignore", category=FutureWarning)
 
 
 @hydra.main(version_base="1.3", config_path="../configs", config_name="config_train")
 def main(args: DictConfig):
-    # update logging directory with current time
-    if not os.path.isdir(args.logging_dir):
-        os.makedirs(args.logging_dir)
     logging_dir = os.path.join(args.logging_dir, f"TRAIN_{datetime.datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}")
-    os.makedirs(logging_dir)
-    os.makedirs(os.path.join(logging_dir, "checkpoints"))  # for saving checkpoints
+    if DIST_WRAPPER.rank == 0:
+        # update logging directory with current time
+        if not os.path.isdir(args.logging_dir):
+            os.makedirs(args.logging_dir)
+        os.makedirs(logging_dir)
+        os.makedirs(os.path.join(logging_dir, "checkpoints"))  # for saving checkpoints
 
-    # save current configuration in logging directory
-    with open(f"{logging_dir}/config.yaml", "w") as f:
-        OmegaConf.save(args, f)
+        # save current configuration in logging directory
+        with open(f"{logging_dir}/config.yaml", "w") as f:
+            OmegaConf.save(args, f)
 
     # check environment
     use_cuda = torch.cuda.device_count() > 0
@@ -48,6 +52,9 @@ def main(args: DictConfig):
     else:
         device = torch.device("cpu")
     if DIST_WRAPPER.world_size > 1:
+        logging.info(
+            f"Using DDP with {DIST_WRAPPER.world_size} processes, rank: {DIST_WRAPPER.rank}"
+        )
         timeout_seconds = int(os.environ.get("NCCL_TIMEOUT_SECOND", 600))
         dist.init_process_group(
             backend="nccl", timeout=datetime.timedelta(seconds=timeout_seconds)
@@ -119,14 +126,16 @@ def main(args: DictConfig):
 
     start_epoch = 1
     if args.resume.ckpt_dir is not None:
-        # load checkpoint (.pth)
-        checkpoint = torch.load(args.ckpt_dir, map_location=device)
-        model.load_state_dict(checkpoint['model_state_dict'])
+        checkpoint = torch.load(args.resume.ckpt_dir, map_location=device)
+        if DIST_WRAPPER.world_size > 1:
+            model.module.load_state_dict(checkpoint['model_state_dict'])
+        else:
+            model.load_state_dict(checkpoint['model_state_dict'])
         if not args.resume.load_model_only:
             optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
             scheduler.load_state_dict(checkpoint['scheduler_state_dict'])
             start_epoch = checkpoint['epoch'] + 1
-        logging.info(f"Loaded checkpoint from {args.ckpt_dir}")
+        logging.info(f"Loaded checkpoint from {args.resume.ckpt_dir}")
 
     # instantiate loss
     loss_fn = AllLosses(
@@ -135,122 +144,152 @@ def main(args: DictConfig):
         reduction=args.loss.reduction
     )
 
-    # Initialize variables for storing loss data
-    step_losses, epoch_losses, val_losses = [], [], []
-    with open(f"{logging_dir}/loss.csv", "w") as f:
-        f.write("Epoch,Loss,Val Loss\n")
+    # sanity check
+    torch.cuda.empty_cache()
+    for check_iter, check_batch in enumerate(val_loader):
+        check_batch = to_device(check_batch, device)
+        init_positions = centre_random_augmentation(check_batch["ref_structure"])
+        check_batch.pop("ref_structure")
+        pred_positions = model(
+            initial_positions=init_positions,
+            input_feature_dict=check_batch,
+        )
+        _ = loss_fn(pred_positions,
+            check_batch['atom_positions'],
+            single_mask=check_batch['atom_mask'],
+            pair_mask=check_batch['lddt_mask'],
+            lddt_enabled=args.loss.lddt_enabled,
+            bond_enabled=args.loss.bond_enabled
+        )
+        torch.cuda.empty_cache()
+        if check_iter >= 2:
+            break
+    logging.info(f"Sanity check done")
+
+    if DIST_WRAPPER.rank == 0:
+        with open(f"{logging_dir}/loss.csv", "w") as f:
+            f.write("Epoch,Loss,Val Loss\n")
 
     epoch_progress = tqdm(
         total=args.epochs,
         leave=False,
         position=0,
         ncols=100,  # Adjust width of the progress bar
-    )
+    ) if DIST_WRAPPER.rank == 0 else None
     # Main train/eval loop
     for crt_epoch in range(start_epoch, args.epochs + 1):
         epoch_loss, epoch_val_loss = 0, 0
         model.train()
 
         # Training loop with dynamic progress bar
-        with tqdm(
-                enumerate(train_loader),
+        train_iter = enumerate(train_loader)
+        if DIST_WRAPPER.rank == 0:
+            train_iter = tqdm(
+                train_iter,
                 desc=f"Epoch {crt_epoch}/{args.epochs} ",
                 total=len(train_loader),
                 leave=True,
                 position=1,
-                ncols=100,  # Adjust width of the progress bar
-        ) as pbar:
-            for crt_step, input_feature_dict in pbar:
-                input_feature_dict = to_device(input_feature_dict, device)
-                init_positions = input_feature_dict["ref_structure"]
-                input_feature_dict.pop("ref_structure")
+                ncols=100,
+            )
+        for crt_step, input_feature_dict in train_iter:
+            input_feature_dict = to_device(input_feature_dict, device)
+            init_positions = centre_random_augmentation(input_feature_dict["ref_structure"])
+            input_feature_dict.pop("ref_structure")
 
-                pred_positions = model(
-                    initial_positions=init_positions,
-                    input_feature_dict=input_feature_dict,
-                )
+            pred_positions = model(
+                initial_positions=init_positions,
+                input_feature_dict=input_feature_dict,
+            )
 
-                loss = loss_fn(pred_positions,
-                    input_feature_dict['atom_positions'],
-                    single_mask=input_feature_dict['atom_mask'],
-                    pair_mask=input_feature_dict['lddt_mask'],
-                    lddt_enabled=args.loss.lddt_enabled,
-                    bond_enabled=args.loss.bond_enabled
-                )
+            loss = loss_fn(pred_positions,
+                input_feature_dict['atom_positions'],
+                single_mask=input_feature_dict['atom_mask'],
+                pair_mask=input_feature_dict['lddt_mask'],
+                lddt_enabled=args.loss.lddt_enabled,
+                bond_enabled=args.loss.bond_enabled
+            )
 
-                optimizer.zero_grad(set_to_none=True)
-                loss.backward()
-                optimizer.step()
-                scheduler.step()
+            optimizer.zero_grad(set_to_none=True)
+            loss.backward()
+            optimizer.step()
+            scheduler.step()
 
-                step_loss = loss.item()
-                epoch_loss += step_loss
-                step_losses.append(step_loss)
+            step_loss = loss.item()
+            epoch_loss += step_loss
 
-                # Update the progress bar dynamically
-                pbar.set_postfix(step_loss=f"{step_loss:.3f}")
+            # Update the progress bar dynamically
+            if DIST_WRAPPER.rank == 0:
+                train_iter.set_postfix(step_loss=f"{step_loss:.3f}")
 
-            # Calculate average epoch loss
-            epoch_loss /= (crt_step + 1)
-            epoch_losses.append(epoch_loss)
+            torch.cuda.empty_cache()
+
+        # Calculate average epoch loss
+        epoch_loss /= (crt_step + 1)
 
         # Validation loop with dynamic progress bar
         model.eval()
-        with tqdm(
-                enumerate(val_loader),
+        val_iter = enumerate(val_loader)
+        if DIST_WRAPPER.rank == 0:
+            val_iter = tqdm(
+                val_iter,
                 desc="Validation",
                 total=len(val_loader),
                 leave=True,
                 position=1,
-                ncols=100,  # Adjust width of the progress bar
-        ) as val_pbar:
-            for crt_val_step, val_feature_dict in val_pbar:
-                val_feature_dict = to_device(val_feature_dict, device)
-                init_positions = val_feature_dict["ref_structure"]
-                val_feature_dict.pop("ref_structure")
+                ncols=100,
+            )
+        for crt_val_step, val_feature_dict in val_iter:
+            val_feature_dict = to_device(val_feature_dict, device)
+            init_positions = centre_random_augmentation(val_feature_dict["ref_structure"])
+            val_feature_dict.pop("ref_structure")
 
-                pred_positions = model(
-                    initial_positions=init_positions,
-                    input_feature_dict=val_feature_dict,
-                )
-                val_loss = loss_fn(pred_positions,
-                    val_feature_dict['atom_positions'],
-                    single_mask=val_feature_dict['atom_mask'],
-                    pair_mask=input_feature_dict['lddt_mask'],
-                    lddt_enabled=args.loss.lddt_enabled,
-                    bond_enabled=args.loss.bond_enabled
-                )
+            pred_positions = model(
+                initial_positions=init_positions,
+                input_feature_dict=val_feature_dict,
+            )
+            val_loss = loss_fn(pred_positions,
+                val_feature_dict['atom_positions'],
+                single_mask=val_feature_dict['atom_mask'],
+                pair_mask=val_feature_dict['lddt_mask'],
+                lddt_enabled=args.loss.lddt_enabled,
+                bond_enabled=args.loss.bond_enabled
+            )
 
-                step_val_loss = val_loss.item()
-                epoch_val_loss += step_val_loss
-                val_losses.append(step_val_loss)
+            step_val_loss = val_loss.item()
+            epoch_val_loss += step_val_loss
 
-                # Update the validation progress bar dynamically
-                val_pbar.set_postfix(val_loss=f"{step_val_loss:.3f}")
+            # Update the validation progress bar dynamically
+            if DIST_WRAPPER.rank == 0:
+                val_iter.set_postfix(val_loss=f"{step_val_loss:.3f}")
 
-            # Calculate average validation loss
-            epoch_val_loss /= (crt_val_step + 1)
+            torch.cuda.empty_cache()
 
-        # update epoch progress bar
-        epoch_progress.set_postfix(
-            loss=f"{epoch_loss:.3f}", val_loss=f"{epoch_val_loss:.3f}"
-        )
-        epoch_progress.update()
+        # Calculate average validation loss
+        epoch_val_loss /= (crt_val_step + 1)
 
-        # Optionally save the loss data to a file after each epoch
-        with open(f"{logging_dir}/loss.csv", "a") as f:
-            f.write(f"{crt_epoch},{epoch_loss},{epoch_val_loss}\n")
+        if DIST_WRAPPER.rank == 0 and epoch_progress is not None:
+            epoch_progress.set_postfix(loss=f"{epoch_loss:.3f}", val_loss=f"{epoch_val_loss:.3f}")
+            epoch_progress.update()
 
-        # Implement checkpoint saving
-        if crt_epoch % args.checkpoint_interval == 0 or crt_epoch == args.epochs:
-            checkpoint_path = os.path.join(logging_dir, f"checkpoints/epoch_{crt_epoch}.pth")
-            torch.save({
-                'epoch': crt_epoch,
-                'model_state_dict': model.state_dict(),
-                'optimizer_state_dict': optimizer.state_dict(),
-                'scheduler_state_dict': scheduler.state_dict(),
-                'loss': epoch_loss,
-            }, checkpoint_path)
+            # Append loss data to file
+            with open(f"{logging_dir}/loss.csv", "a") as f:
+                f.write(f"{crt_epoch},{epoch_loss},{epoch_val_loss}\n")
+
+            # Save checkpoint only on master process
+            if crt_epoch % args.checkpoint_interval == 0 or crt_epoch == args.epochs:
+                checkpoint_path = os.path.join(logging_dir, f"checkpoints/epoch_{crt_epoch}.pth")
+                torch.save({
+                    'epoch': crt_epoch,
+                    'model_state_dict': model.module.state_dict() if DIST_WRAPPER.world_size > 1 else model.state_dict(),
+                    'optimizer_state_dict': optimizer.state_dict(),
+                    'scheduler_state_dict': scheduler.state_dict(),
+                    'loss': epoch_loss,
+                }, checkpoint_path)
+
+    # Clean up process group when finished
+    if DIST_WRAPPER.world_size > 1:
+        dist.destroy_process_group()
 
 
 def to_device(obj, device):

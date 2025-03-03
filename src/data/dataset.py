@@ -144,10 +144,10 @@ class FeatureTransform:
             'atom_positions': data_object['atom_positions'],
             'atom_mask': data_object['atom_mask'],
             'atom_to_token_index': data_object['atom_to_token_index'],
-            # 'ref_positions': data_object['ref_positions'],
-            # 'ref_mask': data_object['ref_mask'],
-            # 'ref_element': data_object['ref_element'],
-            # 'ref_atom_name_chars': data_object['ref_atom_name_chars'],
+            'ref_positions': data_object['ref_positions'],
+            'ref_mask': data_object['ref_mask'],
+            'ref_element': data_object['ref_element'],
+            'ref_atom_name_chars': data_object['ref_atom_name_chars'],
         }
         token_object = {
             'aatype': data_object['aatype'],
@@ -234,16 +234,16 @@ class FeatureTransform:
     def get_ref_structure(self, data_object, s_trans=1.):
         # get reference structure for model input
         ref_structure = []
-        ref_positions = []
-        ref_masks = []
-        ref_elements = []
-        ref_atom_name_chars = []
+        # ref_positions = []
+        # ref_masks = []
+        # ref_elements = []
+        # ref_atom_name_chars = []
 
         token_indices = {tid: torch.where(data_object['atom_to_token_index'] == tid)[0] for tid in data_object['token_index']}
         for tid, token_mask in token_indices.items():
-            restype = rc.IDX_TO_RESIDUE[data_object['aatype'][tid].item()]
+            # restype = rc.IDX_TO_RESIDUE[data_object['aatype'][tid].item()]
 
-            ref_pos, ref_mask, element, atom_name_chars = get_ccd_features(restype, self.ccd_info)
+            ref_pos = data_object['ref_positions'][token_mask]
             atom_pos = data_object['atom_positions'][token_mask]
             atom_weights = torch.tensor(
                 rc.ATOM_WEIGHT_MAPPING[
@@ -255,20 +255,21 @@ class FeatureTransform:
             atom_com = calc_com(atom_pos, weights=atom_weights)  # (,3)
 
             # get reference structure
-            ref_struc = (random_rotation(ref_pos - ref_com[None, :]) + atom_com[None, :]
-                       + torch.randn(3)[None, :] * s_trans)  # add a random translation at scale s_trans
+            ref_pos = random_rotation(ref_pos - ref_com[None, :])
+            data_object['ref_positions'][token_mask] = ref_pos
+            ref_struc = ref_pos + atom_com[None, :] + torch.randn(3)[None, :] * s_trans  # add a random translation at scale s_trans
 
             ref_structure.append(ref_struc)
-            ref_positions.append(ref_pos)
-            ref_masks.append(ref_mask)
-            ref_elements.append(element)
-            ref_atom_name_chars.append(atom_name_chars)
+            # ref_positions.append(ref_pos)
+            # ref_masks.append(ref_mask)
+            # ref_elements.append(element)
+            # ref_atom_name_chars.append(atom_name_chars)
 
         data_object.update({
-            'ref_positions': torch.cat(ref_positions, dim=0).float(),
-            'ref_mask': torch.cat(ref_masks, dim=0).long(),
-            'ref_element': torch.cat(ref_elements, dim=0),
-            'ref_atom_name_chars': torch.cat(ref_atom_name_chars, dim=0),
+            # 'ref_positions': torch.cat(ref_positions, dim=0).float(),
+            # 'ref_mask': torch.cat(ref_masks, dim=0).long(),
+            # 'ref_element': torch.cat(ref_elements, dim=0),
+            # 'ref_atom_name_chars': torch.cat(ref_atom_name_chars, dim=0),
             'ref_structure': torch.cat(ref_structure, dim=0).float(),
             'ref_space_uid': data_object['atom_to_token_index']  # to revise
         })

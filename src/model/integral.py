@@ -128,7 +128,7 @@ class FoldEmbedder(nn.Module):
         s_single, z_pair = self.embedding_module(input_feature_dict)
 
         # add num_sample dimension
-        initial_positions = initial_positions.unsqueeze(1)
+        # initial_positions = initial_positions.unsqueeze(1)
         s_single = s_single.unsqueeze(1)
         z_pair = z_pair.unsqueeze(1)
         

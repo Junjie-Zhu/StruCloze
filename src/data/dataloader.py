@@ -74,20 +74,25 @@ def get_training_dataloader(
     batch_collator = BatchTensorConverter()
 
     if distributed:
-        distributed_sampler = DistributedSampler(
-            dataset, seed=seed, shuffle=shuffle, drop_last=True
+        training_sampler = DistributedSampler(
+            data_train, seed=seed, shuffle=shuffle, drop_last=True
         )
         train_loader = DataLoader(
             dataset=data_train,
             collate_fn=batch_collator,
             batch_size=batch_size,  # batch size on single device
+            sampler=training_sampler,
             num_workers=num_workers,
             pin_memory=pin_memory,
+        )
+        validation_sampler = DistributedSampler(
+            data_val, seed=seed, shuffle=shuffle, drop_last=True
         )
         val_loader = DataLoader(
             dataset=data_val,
             collate_fn=batch_collator,
             batch_size=batch_size,
+            sampler=validation_sampler,
             num_workers=num_workers,
             pin_memory=pin_memory,
         )
