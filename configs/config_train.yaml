@@ -47,7 +47,7 @@ optimizer:
   lr: 0.0008
   weight_decay: 0.95
   beta1: 0.9
-  beta2: 0.999
+  beta2: 0.98
   use_adamw: False
   lr_scheduler: "af3"
   warmup_steps: 7000
@@ -62,3 +62,6 @@ loss:
   bond_enabled: False
 
 hydra:
+  run:
+    dir: .
+  output_subdir: null

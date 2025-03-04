@@ -144,26 +144,33 @@ def main(args: DictConfig):
         reduction=args.loss.reduction
     )
 
+    # get model summary
+    if DIST_WRAPPER.rank == 0:
+        logging.info(model)
+        logging.info(f"Model has {sum(p.numel() for p in model.parameters()):,} parameters")
+
     # sanity check
     torch.cuda.empty_cache()
-    for check_iter, check_batch in enumerate(val_loader):
-        check_batch = to_device(check_batch, device)
-        init_positions = centre_random_augmentation(check_batch["ref_structure"])
-        check_batch.pop("ref_structure")
-        pred_positions = model(
-            initial_positions=init_positions,
-            input_feature_dict=check_batch,
-        )
-        _ = loss_fn(pred_positions,
-            check_batch['atom_positions'],
-            single_mask=check_batch['atom_mask'],
-            pair_mask=check_batch['lddt_mask'],
-            lddt_enabled=args.loss.lddt_enabled,
-            bond_enabled=args.loss.bond_enabled
-        )
-        torch.cuda.empty_cache()
-        if check_iter >= 2:
-            break
+    model.eval()
+    with torch.no_grad():
+        for check_iter, check_batch in enumerate(val_loader):
+            check_batch = to_device(check_batch, device)
+            init_positions = centre_random_augmentation(check_batch["ref_structure"])
+            check_batch.pop("ref_structure")
+            pred_positions = model(
+                initial_positions=init_positions,
+                input_feature_dict=check_batch,
+            )
+            _ = loss_fn(pred_positions,
+                check_batch['atom_positions'],
+                single_mask=check_batch['atom_mask'],
+                pair_mask=check_batch['lddt_mask'],
+                lddt_enabled=args.loss.lddt_enabled,
+                bond_enabled=args.loss.bond_enabled
+            )
+            torch.cuda.empty_cache()
+            if check_iter >= 2:
+                break
     logging.info(f"Sanity check done")
 
     if DIST_WRAPPER.rank == 0:
@@ -186,7 +193,7 @@ def main(args: DictConfig):
         if DIST_WRAPPER.rank == 0:
             train_iter = tqdm(
                 train_iter,
-                desc=f"Epoch {crt_epoch}/{args.epochs} ",
+                desc="Step",
                 total=len(train_loader),
                 leave=True,
                 position=1,
@@ -229,41 +236,41 @@ def main(args: DictConfig):
 
         # Validation loop with dynamic progress bar
         model.eval()
-        val_iter = enumerate(val_loader)
-        if DIST_WRAPPER.rank == 0:
-            val_iter = tqdm(
-                val_iter,
-                desc="Validation",
-                total=len(val_loader),
-                leave=True,
-                position=1,
-                ncols=100,
-            )
-        for crt_val_step, val_feature_dict in val_iter:
-            val_feature_dict = to_device(val_feature_dict, device)
-            init_positions = centre_random_augmentation(val_feature_dict["ref_structure"])
-            val_feature_dict.pop("ref_structure")
-
-            pred_positions = model(
-                initial_positions=init_positions,
-                input_feature_dict=val_feature_dict,
-            )
-            val_loss = loss_fn(pred_positions,
-                val_feature_dict['atom_positions'],
-                single_mask=val_feature_dict['atom_mask'],
-                pair_mask=val_feature_dict['lddt_mask'],
-                lddt_enabled=args.loss.lddt_enabled,
-                bond_enabled=args.loss.bond_enabled
-            )
-
-            step_val_loss = val_loss.item()
-            epoch_val_loss += step_val_loss
-
-            # Update the validation progress bar dynamically
+        with torch.no_grad():
+            val_iter = enumerate(val_loader)
             if DIST_WRAPPER.rank == 0:
-                val_iter.set_postfix(val_loss=f"{step_val_loss:.3f}")
+                val_iter = tqdm(
+                    val_iter,
+                    desc="Validation",
+                    total=len(val_loader),
+                    leave=True,
+                    position=1,
+                    ncols=100,
+                )
+            for crt_val_step, val_feature_dict in val_iter:
+                torch.cuda.empty_cache()
+                val_feature_dict = to_device(val_feature_dict, device)
+                init_positions = centre_random_augmentation(val_feature_dict["ref_structure"])
+                val_feature_dict.pop("ref_structure")
 
-            torch.cuda.empty_cache()
+                pred_positions = model(
+                    initial_positions=init_positions,
+                    input_feature_dict=val_feature_dict,
+                )
+                val_loss = loss_fn(pred_positions,
+                    val_feature_dict['atom_positions'],
+                    single_mask=val_feature_dict['atom_mask'],
+                    pair_mask=val_feature_dict['lddt_mask'],
+                    lddt_enabled=args.loss.lddt_enabled,
+                    bond_enabled=args.loss.bond_enabled
+                )
+
+                step_val_loss = val_loss.item()
+                epoch_val_loss += step_val_loss
+
+                # Update the validation progress bar dynamically
+                if DIST_WRAPPER.rank == 0:
+                    val_iter.set_postfix(val_loss=f"{step_val_loss:.3f}")
 
         # Calculate average validation loss
         epoch_val_loss /= (crt_val_step + 1)
@@ -286,6 +293,8 @@ def main(args: DictConfig):
                     'scheduler_state_dict': scheduler.state_dict(),
                     'loss': epoch_loss,
                 }, checkpoint_path)
+
+        torch.cuda.empty_cache()
 
     # Clean up process group when finished
     if DIST_WRAPPER.world_size > 1:
