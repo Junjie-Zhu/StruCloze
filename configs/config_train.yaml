@@ -44,7 +44,7 @@ model:
     zero_init_atom_decoder_linear: False
 
 optimizer:
-  lr: 0.0008
+  lr: 0.0001
   weight_decay: 0.95
   beta1: 0.9
   beta2: 0.98
@@ -58,8 +58,9 @@ loss:
   weight_mse: 1.0
   eps: 1e-8
   reduction: "mean"
-  lddt_enabled: False
+  lddt_enabled: True
   bond_enabled: False
+  clip_grad_value: 0.5
 
 hydra:
   run:
