@@ -1,0 +1,42 @@
+# configurations for training
+
+batch_size: 1  # in inference 1 by default
+seed: 42
+deterministic: False
+logging_dir: "../logs"  # better absolute path, to revise
+ckpt_dir: null
+
+data:
+  path_to_dataset: "../data/metadata.csv"  # better absolute path, to revise
+  path_to_ccd_info: "../data/ccd_info.pt"  # better absolute path, to revise
+  recenter_atoms: True
+  eps: 1e-8
+  shuffle: False
+  num_workers: 16
+  pin_memory: False
+
+model:
+  c_atom: 128
+  c_atompair: 16
+  c_token: 384
+  c_s: 384
+  c_z: 128
+  n_atom_layers: 3
+  n_token_layers: 12
+  n_atom_attn_heads: 4
+  n_token_attn_heads: 8
+  initialization:
+    zero_init_condition_transition: False
+    zero_init_atom_encoder_residual_linear: False
+    he_normal_init_atom_encoder_small_mlp: False
+    he_normal_init_atom_encoder_output: False
+    glorot_init_self_attention: False
+    zero_init_adaln: True
+    zero_init_residual_condition_transition: False
+    zero_init_dit_output: True
+    zero_init_atom_decoder_linear: False
+
+hydra:
+  run:
+    dir: .
+  output_subdir: null

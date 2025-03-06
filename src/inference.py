@@ -77,12 +77,9 @@ def main(args: DictConfig):
     inference_loader = get_inference_dataloader(
         dataset=dataset,
         batch_size=args.batch_size,
-        prop_train=args.data.prop_train,
-        shuffle=args.data.shuffle,
         distributed=DIST_WRAPPER.world_size > 1,
         num_workers=args.data.num_workers,
         pin_memory=args.data.pin_memory,
-        seed=args.seed,
     )
 
     # instantiate model
@@ -114,9 +111,8 @@ def main(args: DictConfig):
     else:
         model.load_state_dict(checkpoint['model_state_dict'])
     if DIST_WRAPPER.rank == 0:
-        logging.info(f"Loaded checkpoint from {args.resume.ckpt_dir}")
-        logging.info(model)
-        logging.info(f"Model has {sum(p.numel() for p in model.parameters()):,} parameters")
+        logging.info(f"Loaded checkpoint from {args.ckpt_dir}")
+        logging.info(f"Model has {sum(p.numel() for p in model.parameters()) / 1000000:.2f}M parameters")
 
     # sanity check
     torch.cuda.empty_cache()
