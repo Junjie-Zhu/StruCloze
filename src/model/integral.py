@@ -125,14 +125,15 @@ class FoldEmbedder(nn.Module):
 
         # scaling initial positions to ensure approximately unit variance
         initial_positions = initial_positions / self.position_scaling
+        N_sample = initial_positions.shape[1]
 
         # encode token-level features
         s_single, z_pair = self.embedding_module(input_feature_dict)
 
         # add num_sample dimension
         # initial_positions = initial_positions.unsqueeze(1)
-        s_single = s_single.unsqueeze(1)
-        z_pair = z_pair.unsqueeze(1)
+        s_single = s_single.unsqueeze(1).expand(-1, N_sample, -1, -1)
+        z_pair = z_pair.unsqueeze(1).expand(-1, N_sample, -1, -1, -1)
         
         # encode atom-level features
         a_token, q_skip, c_skip, p_skip = self.atom_encoder(

@@ -321,11 +321,12 @@ def main(args: DictConfig):
 
 
 def structure_augment(input_feature_dict, n_samples=1):
-    atom_com = input_feature_dict["atom_com"]
     token_index = input_feature_dict["token_index"]
     atom_to_token_index = input_feature_dict["atom_to_token_index"]
     B, N_token = token_index.shape
     _, N_atom = atom_to_token_index.shape
+
+    atom_com = input_feature_dict["atom_com"].unsqueeze(1).expand(B, n_samples, N_atom, 3)
 
     # random rotation on reference positions
     rot_matrix = uniform_random_rotation(B * n_samples * N_token).view(B, n_samples, N_token, 3, 3).to(atom_com.device)
