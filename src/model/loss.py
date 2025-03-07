@@ -567,11 +567,11 @@ class AllLosses(nn.Module):
             )
         if bond_enabled:
             # Calculate Bond loss, to revise
-            losses["bond_loss"] = self.bond_loss(
-                pred_distance=pred_positions,
-                true_distance=true_positions,
-                distance_mask=torch.ones_like(true_positions[..., 0]),
-                bond_mask=torch.ones_like(true_positions[..., 0]),
+            losses["bond_loss"] = self.bond_loss.sparse_forward(
+                pred_coordinate=pred_positions,
+                true_coordinate=true_positions,
+                distance_mask=pair_mask,
+                bond_mask=pair_mask,
             )
 
         cum_loss = 0
