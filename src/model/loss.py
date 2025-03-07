@@ -575,6 +575,7 @@ class AllLosses(nn.Module):
             )
 
         cum_loss = 0
+        seperate_loss = []
         for loss_item, loss_outputs in losses.items():
             if isinstance(loss_outputs, tuple):
                 loss, metrics = loss_outputs
@@ -582,7 +583,8 @@ class AllLosses(nn.Module):
                 assert isinstance(loss_outputs, torch.Tensor)
                 loss, metrics = loss_outputs, {}
             cum_loss += loss
-        return cum_loss
+            seperate_loss.append(loss)
+        return cum_loss, seperate_loss
 
     def forward(self,
                 pred_positions,

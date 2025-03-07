@@ -131,7 +131,7 @@ def get_atom_features(data_object, ccd_atom14):
     atom_elements = torch.Tensor(onehot_encoded_data)
 
     # Add random rotation
-    rot_matrix = uniform_random_rotation(atom_com.shape[0])
+    rot_matrix = uniform_random_rotation(data_object['residue_index'].shape[0])
     rot_matrix_expand = [rot_matrix[i] for i in token2atom_map]
     rot_matrix = torch.stack(rot_matrix_expand, dim=0)
 
@@ -145,6 +145,7 @@ def get_atom_features(data_object, ccd_atom14):
     output_batch = {
         'atom_positions': atom_positions,
         'atom_mask': torch.ones_like(atom_positions[:, 0]).squeeze(),
+        'atom_com': atom_com,
         'lddt_mask': atom_distances < 15.0,
         'atom_to_token_index': token2atom_map,
 
@@ -154,7 +155,6 @@ def get_atom_features(data_object, ccd_atom14):
         'seq_mask': torch.ones_like(data_object['residue_index'], dtype=torch.float32),
         'aatype': data_object['aatype'],
 
-        'ref_structure': ref_positions + atom_com,
         'ref_positions': ref_positions,
         'ref_space_uid': atom_space_uid,
         'ref_atom_name_chars': atom_name_char,
