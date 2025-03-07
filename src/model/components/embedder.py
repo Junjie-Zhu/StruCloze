@@ -115,5 +115,6 @@ class EmbeddingModule(nn.Module):
         z_trunk = z_trunk + self.transition_z1(z_trunk)
         z_trunk = z_trunk + self.transition_z2(z_trunk)
 
+        # maybe to add a distance embedding here
         return s_trunk, z_trunk
 

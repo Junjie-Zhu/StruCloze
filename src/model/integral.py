@@ -23,6 +23,7 @@ class FoldEmbedder(nn.Module):
         n_atom_attn_heads: int = 4,
         n_token_attn_heads: int = 8,
         initialization: Optional[dict[str, Union[str, float, bool]]] = None,
+        position_scaling: float = 16.0,
     ):
         super(FoldEmbedder, self).__init__()
 
@@ -66,6 +67,7 @@ class FoldEmbedder(nn.Module):
 
         # initialize parameters
         self.init_parameters(initialization)
+        self.position_scaling = position_scaling
 
     def init_parameters(self, initialization: dict):
         """
@@ -122,7 +124,7 @@ class FoldEmbedder(nn.Module):
     ) -> torch.Tensor:
 
         # scaling initial positions to ensure approximately unit variance
-        initial_positions = initial_positions / 16.
+        initial_positions = initial_positions / self.position_scaling
 
         # encode token-level features
         s_single, z_pair = self.embedding_module(input_feature_dict)
@@ -159,5 +161,5 @@ class FoldEmbedder(nn.Module):
             c_skip=c_skip,
             p_skip=p_skip,
         )
-        return r_update * 16.  # rescale back to original scale
+        return r_update * self.position_scaling  # rescale back to original scale
 

@@ -1,6 +1,7 @@
 import logging
 import os
 import warnings
+from random import random
 
 import rootutils
 import datetime
@@ -98,6 +99,7 @@ def main(args: DictConfig):
         n_atom_attn_heads=args.model.n_atom_attn_heads,
         n_token_attn_heads=args.model.n_token_attn_heads,
         initialization=args.model.initialization,
+        position_scaling=args.model.position_scaling,
     ).to(device)
     if DIST_WRAPPER.world_size > 1:
         logging.info("Using DDP")
@@ -204,10 +206,23 @@ def main(args: DictConfig):
             init_positions = centre_random_augmentation(input_feature_dict["ref_structure"])
             input_feature_dict.pop("ref_structure")
 
+            if args.self_conditioning and random() < 0.3:
+                with torch.no_grad():
+                    pred_positions = model(
+                        initial_positions=init_positions,
+                        input_feature_dict=input_feature_dict,
+                    )
+                if args.predict_diff:
+                    init_positions = pred_positions + init_positions
+                else:
+                    init_positions = pred_positions
+
             pred_positions = model(
                 initial_positions=init_positions,
                 input_feature_dict=input_feature_dict,
             )
+            if args.predict_diff:
+                pred_positions = pred_positions + init_positions
 
             loss = loss_fn(pred_positions,
                 input_feature_dict['atom_positions'],

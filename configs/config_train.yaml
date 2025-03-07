@@ -2,18 +2,20 @@
 
 batch_size: 4  # batch size on single device
 epochs: 200
+self_conditioning: True
+predict_diff: False
 checkpoint_interval: 10  # save checkpoint every n epochs
 seed: 42
 deterministic: False
-logging_dir: "../logs"  # better absolute path, to revise
+logging_dir: "/root/autodl-tmp/Fold-Embedder/logs"  # better absolute path, to revise
 
 resume:
   ckpt_dir: null
   load_model_only: False
 
 data:
-  path_to_dataset: "../data/metadata.csv"  # better absolute path, to revise
-  path_to_ccd_info: "../data/ccd_info.pt"  # better absolute path, to revise
+  path_to_dataset: "/root/autodl-tmp/pretrain_dataset/metadata.copy.csv"  # better absolute path, to revise
+  path_to_ccd_info: "/root/autodl-tmp/Fold-Embedder/src/data/ccd_atom37.pkl"  # better absolute path, to revise
   truncate_size: 384
   recenter_atoms: True
   eps: 1e-8
@@ -42,9 +44,10 @@ model:
     zero_init_residual_condition_transition: False
     zero_init_dit_output: True
     zero_init_atom_decoder_linear: False
+  position_scaling: 16.0
 
 optimizer:
-  lr: 0.0001
+  lr: 0.0005
   weight_decay: 0.95
   beta1: 0.9
   beta2: 0.98
@@ -55,12 +58,12 @@ optimizer:
   decay_factor: 0.95
 
 loss:
-  weight_mse: 1.0
+  weight_mse: 0.1
   eps: 1e-8
   reduction: "mean"
   lddt_enabled: True
   bond_enabled: False
-  clip_grad_value: 0.5
+  clip_grad_value: 1.0
 
 hydra:
   run:
