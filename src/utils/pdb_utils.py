@@ -25,31 +25,40 @@ def to_pdb(
 ):
     """save atom_positions as pdb with biotite"""
     restype = [rc.IDX_TO_RESIDUE[res.item()] for res in input_feature_dict["aatype"].squeeze()]
-    atom_to_token_index = input_feature_dict["atom_to_token_index"].squeeze()
+    atom_to_token_index = input_feature_dict["atom_to_token_index"].squeeze().cpu()
 
-    atom_positions = atom_positions.squeeze()
-    chain_index = [INT_TO_CHAIN[input_feature_dict["chain_index"].squeeze()[i.item()]] for i in atom_to_token_index]
+    atom_positions = atom_positions.squeeze().cpu()
+    chain_index = [INT_TO_CHAIN[input_feature_dict["chain_index"].squeeze()[i.item()].item()] for i in atom_to_token_index]
     restype_ = [restype[i.item()] for i in atom_to_token_index]
     element_ = convert_atom_name_id(input_feature_dict["ref_atom_name_char"].squeeze())
 
-    structure = struc.AtomArray(len(atom_positions))
-    structure.coord = np.array(atom_positions.cpu())
-    structure.chain_id = chain_index
-    structure.res_name = restype_
-    structure.res_id = np.array(atom_to_token_index.cpu())
-    structure.atom_name = element_
-    structure.element = element_
+    with open(os.path.join(output_dir, f"{input_feature_dict['accession_code']}.pdb"), 'w') as f:
+        for i in range(atom_positions.shape[0]):
+            f.write(
+                f'ATOM  {i + 1:>5} {element_[i]:<4} {restype_[i]:>3} A{atom_to_token_index[i] + 1:>4}    '
+                f'{atom_positions[i][0]:>8.3f}{atom_positions[i][1]:>8.3f}{atom_positions[i][2]:>8.3f}'
+                f'  1.00  0.00           {element_[i][0]:>2}\n'
+            )
+        f.write('END\n')
 
-    pdb_file = pdb.PDBFile()
-    pdb_file.set_structure(structure)
+    # structure = struc.AtomArray(len(atom_positions))
+    # structure.coord = np.array(atom_positions.cpu())
+    # structure.chain_id = chain_index
+    # structure.res_name = restype_
+    # structure.res_id = np.array(atom_to_token_index.cpu())
+    # structure.atom_name = element_
+    # structure.element = element_
+    #
+    # pdb_file = pdb.PDBFile()
+    # pdb_file.set_structure(structure)
 
-    if os.path.isdir(output_dir):
-        output_dir = os.path.join(output_dir, f"{input_feature_dict['accession_code']}.pdb")
-        pdb_file.write(output_dir)
-    elif output_dir.endswith(".pdb"):
-        pdb_file.write(output_dir)
-    else:
-        raise ValueError("output_dir must be a directory or a .pdb file path")
+    # if os.path.isdir(output_dir):
+    #     output_dir = os.path.join(output_dir, f"{input_feature_dict['accession_code']}.pdb")
+    #     pdb_file.write(output_dir)
+    # elif output_dir.endswith(".pdb"):
+    #     pdb_file.write(output_dir)
+    # else:
+    #     raise ValueError("output_dir must be a directory or a .pdb file path")
 
 
 def convert_atom_name_id(onehot_tensor: torch.Tensor):
