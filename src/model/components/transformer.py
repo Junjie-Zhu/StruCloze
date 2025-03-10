@@ -767,6 +767,7 @@ class AtomAttentionEncoder(nn.Module):
 
         # If provided, add trunk embeddings and noisy positions
         n_token = None
+        N_sample = 1
         if r_l is not None:
             N_sample = r_l.size(-3)
 

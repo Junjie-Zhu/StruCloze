@@ -15,7 +15,7 @@ class FoldEmbedder(nn.Module):
         self,
         c_atom: int = 128,
         c_atompair: int = 16,
-        c_token: int = 768,
+        c_token: int = 384,
         c_s: int = 384,
         c_z: int = 128,
         n_atom_layers: int = 3,
@@ -30,6 +30,9 @@ class FoldEmbedder(nn.Module):
         self.embedding_module = EmbeddingModule(
             c_s=c_s,
             c_z=c_z,
+            c_atom=c_atom,
+            c_atompair=c_atompair,
+            c_token=c_token,
         )
         self.atom_encoder = AtomAttentionEncoder(
             has_coords=True,
