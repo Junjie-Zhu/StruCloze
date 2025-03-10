@@ -131,9 +131,15 @@ def get_atom_features(data_object, ccd_atom14):
     atom_elements = torch.Tensor(onehot_encoded_data)
 
     # Add random rotation
+    global_rot_matrix = uniform_random_rotation(1).expand(atom_positions.shape[0], 3, 3)
     rot_matrix = uniform_random_rotation(data_object['residue_index'].shape[0])
     rot_matrix_expand = [rot_matrix[i] for i in token2atom_map]
     rot_matrix = torch.stack(rot_matrix_expand, dim=0)
+
+    atom_positions = rot_vec_mul(
+        r=global_rot_matrix,
+        t=atom_positions,
+    )
 
     ref_positions = rot_vec_mul(
         r=rot_matrix,

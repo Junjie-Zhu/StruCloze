@@ -320,7 +320,8 @@ def main(args: DictConfig):
         dist.destroy_process_group()
 
 
-def structure_augment(input_feature_dict, n_samples=1):
+def structure_augment(input_feature_dict,
+                      n_samples=1):
     token_index = input_feature_dict["token_index"]
     atom_to_token_index = input_feature_dict["atom_to_token_index"]
     B, N_token = token_index.shape
@@ -333,17 +334,12 @@ def structure_augment(input_feature_dict, n_samples=1):
     rot_matrix = rot_matrix.gather(2,
         atom_to_token_index.unsqueeze(1).unsqueeze(-1).unsqueeze(-1).expand(B, n_samples, N_atom, 3, 3)
     )
+
     ref_structure = rot_vec_mul(
         r=rot_matrix,
         t=input_feature_dict['ref_positions'].unsqueeze(1).expand(B, n_samples, N_atom, 3)
     ) + atom_com
 
-    global_rot_matrix = uniform_random_rotation(B * n_samples).view(
-        B, n_samples, 3, 3).unsqueeze(2).expand(B, n_samples, N_atom, 3, 3).to(atom_com.device)
-    ref_structure = rot_vec_mul(
-        r=global_rot_matrix,
-        t=ref_structure
-    )
     return ref_structure
 
 

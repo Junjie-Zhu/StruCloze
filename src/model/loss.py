@@ -136,12 +136,22 @@ class MSELoss(nn.Module):
         """
         # True_coordinate_aligned: [..., N_sample, N_atom, 3]
         # Weight: [N_atom] or [..., N_sample, N_atom]
-        with torch.no_grad():
-            true_coordinate_aligned, weight = self.weighted_rigid_align(
-                pred_coordinate=pred_coordinate,
-                true_coordinate=true_coordinate,
-                coordinate_mask=coordinate_mask,
-            )
+        # with torch.no_grad():
+        #     true_coordinate_aligned, weight = self.weighted_rigid_align(
+        #         pred_coordinate=pred_coordinate,
+        #         true_coordinate=true_coordinate,
+        #         coordinate_mask=coordinate_mask,
+        #     )
+        N_sample = pred_coordinate.size(-3)
+        true_coordinate_aligned = expand_at_dim(
+            true_coordinate, dim=-3, n=N_sample
+        )  # [..., N_sample, N_atom, 3]
+
+        weight = torch.ones_like(coordinate_mask)
+        if len(weight.shape) > 1:
+            weight = expand_at_dim(
+                weight, dim=-2, n=N_sample
+            )  # [..., N_sample, N_atom]
 
         # Calculate MSE loss
         per_atom_se = ((pred_coordinate - true_coordinate_aligned) ** 2).sum(
