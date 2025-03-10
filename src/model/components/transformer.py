@@ -766,8 +766,7 @@ class AtomAttentionEncoder(nn.Module):
         q_l = c_l.clone()
 
         # If provided, add trunk embeddings and noisy positions
-        n_token = None
-        N_sample = 1
+        n_token, N_sample = None, None
         if r_l is not None:
             N_sample = r_l.size(-3)
 
@@ -827,12 +826,20 @@ class AtomAttentionEncoder(nn.Module):
         )  # [..., (N_sample), N_atom, c_atom]
 
         # Aggregate per-atom representation to per-token representation
-        a = aggregate_atom_to_token(
-            x_atom=F.relu(self.linear_no_bias_q(q_l)),
-            atom_to_token_idx=atom_to_token_idx.unsqueeze(1).expand(-1, N_sample, -1),
-            n_token=n_token,
-            reduce="mean",
-        )  # [..., (N_sample), N_token, c_token]
+        if N_sample is not None:
+            a = aggregate_atom_to_token(
+                x_atom=F.relu(self.linear_no_bias_q(q_l)),
+                atom_to_token_idx=atom_to_token_idx.unsqueeze(1).expand(-1, N_sample, -1),
+                n_token=n_token,
+                reduce="mean",
+            )  # [..., (N_sample), N_token, c_token]
+        else:
+            a = aggregate_atom_to_token(
+                x_atom=F.relu(self.linear_no_bias_q(q_l)),
+                atom_to_token_idx=atom_to_token_idx,
+                n_token=n_token,
+                reduce="mean",
+            )  # [..., (N_sample), N_token, c_token]
         if (not self.training) and (a.shape[-2] > 2000 or q_l.shape[-2] > 20000):
             torch.cuda.empty_cache()
         return a, q_l, c_l, p_lm

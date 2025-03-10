@@ -109,13 +109,15 @@ class EmbeddingModule(nn.Module):
         self.transition_s2 = Transition(c_s, n=2)
 
         self.rel_pos_encode = RelativePositionEncoding(c_z=c_z)
-        self.layernorm_z = nn.LayerNorm(c_z)
-        self.linear_no_bias_z = LinearNoBias(in_features=c_z + c_s, out_features=c_z)
+        self.linear_no_bias_z = nn.Sequential(
+            LayerNorm(c_z),
+            LinearNoBias(in_features=c_z, out_features=c_z)
+        )
         self.transition_z1 = Transition(c_z, n=2)
         self.transition_z2 = Transition(c_z, n=2)
 
     def forward(self, input_feature_dict):
-        init_embedding = self.initial_enbedding(input_feature_dict=input_feature_dict)
+        init_embedding, _, _, _ = self.initial_enbedding(input_feature_dict=input_feature_dict)
         restypes = F.one_hot(input_feature_dict["aatype"], num_classes=30).float()
         s_trunk = self.linear_no_bias_s(
             torch.cat([init_embedding, restypes], dim=-1)
@@ -123,12 +125,8 @@ class EmbeddingModule(nn.Module):
         s_trunk = s_trunk + self.transition_s1(s_trunk)
         s_trunk = s_trunk + self.transition_s2(s_trunk)
 
-        # outer product of s_trunk
-        z_init = s_trunk.unsqueeze(-2) * s_trunk.unsqueeze(-3)
         z_trunk = self.rel_pos_encode(input_feature_dict)
-        z_trunk = self.linear_no_bias_z(self.layernorm_z(
-            torch.cat([z_trunk, z_init], dim=-1)
-        ))
+        z_trunk = self.linear_no_bias_z(z_trunk)
         z_trunk = z_trunk + self.transition_z1(z_trunk)
         z_trunk = z_trunk + self.transition_z2(z_trunk)
 
