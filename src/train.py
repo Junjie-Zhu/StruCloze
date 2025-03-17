@@ -206,9 +206,10 @@ def main(args: DictConfig):
         for crt_step, input_feature_dict in train_iter:
             input_feature_dict = to_device(input_feature_dict, device)
             init_positions = structure_augment(input_feature_dict, training_sample)  # random rotation on each residue in init positions
+            # init_positions = input_feature_dict['atom_com'].unsqueeze(1).expand(-1, training_sample, -1, -1)
             input_feature_dict.pop('atom_com')
 
-            if args.self_conditioning and random() < 0.3:
+            if args.self_conditioning and random() < 0.5:
                 with torch.no_grad():
                     pred_positions = model(
                         initial_positions=init_positions,
@@ -270,12 +271,15 @@ def main(args: DictConfig):
                 torch.cuda.empty_cache()
                 val_feature_dict = to_device(val_feature_dict, device)
                 init_positions = structure_augment(val_feature_dict)
+                # init_positions = val_feature_dict['atom_com'].unsqueeze(1)
                 val_feature_dict.pop('atom_com')
 
                 pred_positions = model(
                     initial_positions=init_positions,
                     input_feature_dict=val_feature_dict,
                 )
+                if args.predict_diff:
+                    pred_positions = pred_positions + init_positions
                 val_loss, _ = loss_fn(pred_positions,
                     val_feature_dict['atom_positions'],
                     single_mask=val_feature_dict['atom_mask'],

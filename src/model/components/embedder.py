@@ -133,3 +133,4 @@ class EmbeddingModule(nn.Module):
         # maybe to add a distance embedding here
         return s_trunk, z_trunk
 
+

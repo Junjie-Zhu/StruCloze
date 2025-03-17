@@ -1,20 +1,20 @@
 # configurations for training
 
 batch_size: 1  # in inference 1 by default
-seed: 42
+seed: 37
 deterministic: False
-self_conditioning: True
+self_conditioning: False
 predict_diff: False
 logging_dir: "/root/autodl-tmp/Fold-Embedder/logs"  # better absolute path, to revise
 ckpt_dir: null
 
 data:
-  path_to_dataset: "../data/metadata.csv"  # better absolute path, to revise
+  path_to_dataset: "/root/autodl-tmp/pretrain_dataset/metadata.copy.csv"  # better absolute path, to revise
   path_to_ccd_info: "/root/autodl-tmp/Fold-Embedder/src/data/ccd_atom37.pkl"  # better absolute path, to revise
   recenter_atoms: True
   eps: 1e-8
   shuffle: False
-  num_workers: 16
+  num_workers: 1
   pin_memory: False
 
 model:
@@ -23,8 +23,8 @@ model:
   c_token: 384
   c_s: 384
   c_z: 128
-  n_atom_layers: 3
-  n_token_layers: 12
+  n_atom_layers: 4
+  n_token_layers: 4
   n_atom_attn_heads: 4
   n_token_attn_heads: 8
   initialization:
@@ -37,6 +37,7 @@ model:
     zero_init_residual_condition_transition: False
     zero_init_dit_output: True
     zero_init_atom_decoder_linear: False
+  position_scaling: 16.0
 
 hydra:
   run:

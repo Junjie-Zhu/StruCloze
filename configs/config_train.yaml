@@ -1,11 +1,12 @@
 # configurations for training
 
-batch_size: 4  # batch size on single device
+batch_size: 3  # batch size on single device
+n_samples: 1
 epochs: 200
-self_conditioning: True
+self_conditioning: False
 predict_diff: False
 checkpoint_interval: 10  # save checkpoint every n epochs
-seed: 42
+seed: 37
 deterministic: False
 logging_dir: "/root/autodl-tmp/Fold-Embedder/logs"  # better absolute path, to revise
 
@@ -30,8 +31,8 @@ model:
   c_token: 384
   c_s: 384
   c_z: 128
-  n_atom_layers: 3
-  n_token_layers: 12
+  n_atom_layers: 4
+  n_token_layers: 4
   n_atom_attn_heads: 4
   n_token_attn_heads: 8
   initialization:
@@ -48,22 +49,22 @@ model:
 
 optimizer:
   lr: 0.0005
-  weight_decay: 0.95
+  weight_decay: 0.
   beta1: 0.9
-  beta2: 0.98
+  beta2: 0.999
   use_adamw: False
   lr_scheduler: "af3"
-  warmup_steps: 7000
-  decay_every_n_steps: 20000
+  warmup_steps: 2000
+  decay_every_n_steps: 40000
   decay_factor: 0.95
 
 loss:
-  weight_mse: 0.1
+  weight_mse: 0.33
   eps: 1e-8
   reduction: "mean"
   lddt_enabled: True
-  bond_enabled: False
-  clip_grad_value: 1.0
+  bond_enabled: True
+  clip_grad_value: 0
 
 hydra:
   run:

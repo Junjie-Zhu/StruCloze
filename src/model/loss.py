@@ -136,22 +136,12 @@ class MSELoss(nn.Module):
         """
         # True_coordinate_aligned: [..., N_sample, N_atom, 3]
         # Weight: [N_atom] or [..., N_sample, N_atom]
-        # with torch.no_grad():
-        #     true_coordinate_aligned, weight = self.weighted_rigid_align(
-        #         pred_coordinate=pred_coordinate,
-        #         true_coordinate=true_coordinate,
-        #         coordinate_mask=coordinate_mask,
-        #     )
-        N_sample = pred_coordinate.size(-3)
-        true_coordinate_aligned = expand_at_dim(
-            true_coordinate, dim=-3, n=N_sample
-        )  # [..., N_sample, N_atom, 3]
-
-        weight = torch.ones_like(coordinate_mask)
-        if len(weight.shape) > 1:
-            weight = expand_at_dim(
-                weight, dim=-2, n=N_sample
-            )  # [..., N_sample, N_atom]
+        with torch.no_grad():
+            true_coordinate_aligned, weight = self.weighted_rigid_align(
+                pred_coordinate=pred_coordinate,
+                true_coordinate=true_coordinate,
+                coordinate_mask=coordinate_mask,
+            )
 
         # Calculate MSE loss
         per_atom_se = ((pred_coordinate - true_coordinate_aligned) ** 2).sum(
@@ -577,9 +567,9 @@ class AllLosses(nn.Module):
             )
         if bond_enabled:
             # Calculate Bond loss, to revise
-            losses["bond_loss"] = self.bond_loss.sparse_forward(
-                pred_coordinate=pred_positions,
-                true_coordinate=true_positions,
+            losses["bond_loss"] = self.bond_loss(
+                pred_distance=torch.cdist(pred_positions, pred_positions),
+                true_distance=torch.cdist(true_positions, true_positions),
                 distance_mask=pair_mask,
                 bond_mask=pair_mask,
             )
@@ -612,3 +602,4 @@ class AllLosses(nn.Module):
             lddt_enabled=lddt_enabled,
             bond_enabled=bond_enabled
         )
+

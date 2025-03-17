@@ -16,7 +16,7 @@ from src.data.dataset import InferenceDataset, FeatureTransform
 from src.data.dataloader import get_inference_dataloader
 from src.model.integral import FoldEmbedder
 from src.utils.ddp_utils import DIST_WRAPPER, seed_everything
-from src.utils.model_utils import centre_random_augmentation
+from src.utils.model_utils import centre_random_augmentation, uniform_random_rotation, rot_vec_mul
 from src.utils.pdb_utils import to_pdb
 
 rootutils.setup_root(__file__, indicator=".project-root", pythonpath=True)
@@ -120,18 +120,20 @@ def main(args: DictConfig):
     with torch.no_grad():
         for inference_iter, inference_batch in enumerate(inference_loader):
             inference_batch = to_device(inference_batch, device)
-            init_positions = centre_random_augmentation(inference_batch["ref_structure"])
-            inference_batch.pop("ref_structure")
+            init_positions = structure_augment(inference_batch, n_samples=1)
+            # inference_batch.pop("ref_structure")
 
             pred_positions = model(
                 initial_positions=init_positions,
                 input_feature_dict=inference_batch,
             )
+            if args.predict_diff:
+                pred_positions = pred_positions + init_positions
 
             to_pdb(
                 input_feature_dict=inference_batch,
                 atom_positions=pred_positions,
-                output_dir=logging_dir,
+                output_dir=os.path.join(logging_dir, "samples"),
             )
 
             torch.cuda.empty_cache()
@@ -139,6 +141,29 @@ def main(args: DictConfig):
     # Clean up process group when finished
     if DIST_WRAPPER.world_size > 1:
         dist.destroy_process_group()
+
+
+def structure_augment(input_feature_dict,
+                      n_samples=1):
+    token_index = input_feature_dict["token_index"]
+    atom_to_token_index = input_feature_dict["atom_to_token_index"]
+    B, N_token = token_index.shape
+    _, N_atom = atom_to_token_index.shape
+
+    atom_com = input_feature_dict["atom_com"].unsqueeze(1).expand(B, n_samples, N_atom, 3)
+
+    # random rotation on reference positions
+    rot_matrix = uniform_random_rotation(B * n_samples * N_token).view(B, n_samples, N_token, 3, 3).to(atom_com.device)
+    rot_matrix = rot_matrix.gather(2,
+        atom_to_token_index.unsqueeze(1).unsqueeze(-1).unsqueeze(-1).expand(B, n_samples, N_atom, 3, 3)
+    )
+
+    ref_structure = rot_vec_mul(
+        r=rot_matrix,
+        t=input_feature_dict['ref_positions'].unsqueeze(1).expand(B, n_samples, N_atom, 3)
+    ) + atom_com
+
+    return ref_structure
 
 
 def to_device(obj, device):

@@ -30,7 +30,7 @@ def to_pdb(
     atom_positions = atom_positions.squeeze().cpu()
     chain_index = [INT_TO_CHAIN[input_feature_dict["chain_index"].squeeze()[i.item()].item()] for i in atom_to_token_index]
     restype_ = [restype[i.item()] for i in atom_to_token_index]
-    element_ = convert_atom_name_id(input_feature_dict["ref_atom_name_char"].squeeze())
+    element_ = convert_atom_name_id(input_feature_dict["ref_atom_name_chars"].squeeze())
 
     with open(os.path.join(output_dir, f"{input_feature_dict['accession_code']}.pdb"), 'w') as f:
         for i in range(atom_positions.shape[0]):
