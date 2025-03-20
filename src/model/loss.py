@@ -543,6 +543,7 @@ class AllLosses(nn.Module):
                          true_positions,
                          single_mask=None,
                          pair_mask=None,
+                         bond_mask=None,
                          lddt_enabled=False,
                          bond_enabled=False
     ):
@@ -550,6 +551,8 @@ class AllLosses(nn.Module):
             single_mask = torch.ones_like(true_positions[..., 0])
         if pair_mask is None:
             pair_mask = single_mask[..., None, :] * single_mask[..., :, None]  # (batch, N, N)
+        if bond_mask is None and bond_enabled:
+            bond_mask = pair_mask
 
         losses = {}
         # Calculate MSE loss
@@ -571,7 +574,7 @@ class AllLosses(nn.Module):
                 pred_distance=torch.cdist(pred_positions, pred_positions),
                 true_distance=torch.cdist(true_positions, true_positions),
                 distance_mask=pair_mask,
-                bond_mask=pair_mask,
+                bond_mask=bond_mask,
             )
 
         cum_loss = 0
@@ -591,6 +594,7 @@ class AllLosses(nn.Module):
                 true_positions,
                 single_mask=None,
                 pair_mask=None,
+                bond_mask=None,
                 lddt_enabled=False,
                 bond_enabled=False
                 ):
@@ -599,6 +603,7 @@ class AllLosses(nn.Module):
             true_positions,
             single_mask=single_mask,
             pair_mask=pair_mask,
+            bond_mask=bond_mask,
             lddt_enabled=lddt_enabled,
             bond_enabled=bond_enabled
         )

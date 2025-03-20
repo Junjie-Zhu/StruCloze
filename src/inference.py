@@ -12,11 +12,11 @@ from tqdm import tqdm
 import hydra
 from omegaconf import DictConfig, OmegaConf
 
-from src.data.dataset import InferenceDataset, FeatureTransform
+from src.data.dataset import InferenceDataset
+from src.data.transform import FeatureTransform
 from src.data.dataloader import get_inference_dataloader
 from src.model.integral import FoldEmbedder
 from src.utils.ddp_utils import DIST_WRAPPER, seed_everything
-from src.utils.model_utils import centre_random_augmentation, uniform_random_rotation, rot_vec_mul
 from src.utils.pdb_utils import to_pdb
 
 rootutils.setup_root(__file__, indicator=".project-root", pythonpath=True)
@@ -118,7 +118,7 @@ def main(args: DictConfig):
     torch.cuda.empty_cache()
     model.eval()
     with torch.no_grad():
-        for inference_iter, inference_batch in enumerate(inference_loader):
+        for inference_iter, inference_batch in tqdm(enumerate(inference_loader)):
             inference_batch = to_device(inference_batch, device)
             init_positions = structure_augment(inference_batch, n_samples=1)
             # inference_batch.pop("ref_structure")
@@ -152,17 +152,7 @@ def structure_augment(input_feature_dict,
 
     atom_com = input_feature_dict["atom_com"].unsqueeze(1).expand(B, n_samples, N_atom, 3)
 
-    # random rotation on reference positions
-    rot_matrix = uniform_random_rotation(B * n_samples * N_token).view(B, n_samples, N_token, 3, 3).to(atom_com.device)
-    rot_matrix = rot_matrix.gather(2,
-        atom_to_token_index.unsqueeze(1).unsqueeze(-1).unsqueeze(-1).expand(B, n_samples, N_atom, 3, 3)
-    )
-
-    ref_structure = rot_vec_mul(
-        r=rot_matrix,
-        t=input_feature_dict['ref_positions'].unsqueeze(1).expand(B, n_samples, N_atom, 3)
-    ) + atom_com
-
+    ref_structure = input_feature_dict['ref_positions'].unsqueeze(1).expand(B, n_samples, N_atom, 3) + atom_com
     return ref_structure
 
 

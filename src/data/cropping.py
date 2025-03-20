@@ -102,7 +102,44 @@ def contiguous_truncate(atom_object, token_object, truncate_size=384):
     return cropped_atom_object, cropped_token_object
 
 
-def spatial_truncate(atom_object, token_object, truncate_size=384, truncate_dist=10):
+def spatial_truncate(atom_object, token_object, truncate_size=384):
     if token_object['token_index'].shape[0] <= truncate_size:
         return atom_object, token_object
+
+    # Prepare output dictionaries as lists for later concatenation
+    cropped_atom_object = {k: [] for k in atom_object}
+    cropped_token_object = {k: [] for k in token_object}
+
+    _, unique_token_indices = np.unique(atom_object['atom_to_token_index'], return_index=True)
+    atom_com = np.stack([atom_object['atom_com'][idx] for idx in unique_token_indices], axis=0)
+
+    # Get a random center residue
+    center_atom_index = np.random.randint(0, atom_com.shape[0])
+    center_atom_coord = atom_com[center_atom_index]
+
+    # Compute distances to the center residue
+    distances = np.linalg.norm(atom_com - center_atom_coord, axis=1)
+    truncate_dist = np.sort(distances)[truncate_size - 1]
+    crop_token_mask = distances <= truncate_dist
+
+    # Crop token level features
+    for k, v in token_object.items():
+        cropped_token_object[k] = v[crop_token_mask]
+
+    # Get atom indices for cropping
+    cropped_token_index = cropped_token_object['token_index']
+    cropped_atom_mask = np.isin(atom_object['atom_to_token_index'], cropped_token_index)
+
+    # Crop atom level features
+    for k, v in atom_object.items():
+        cropped_atom_object[k] = v[cropped_atom_mask]
+
+    # Reindex token id and atom_to_token id
+    token_id_mapping = {tid: idx for idx, tid in enumerate(cropped_token_object['token_index'])}
+    cropped_token_object['token_index'] = np.array(
+        [token_id_mapping[tid] for tid in cropped_token_object['token_index']])
+    cropped_atom_object['atom_to_token_index'] = np.array(
+        [token_id_mapping[tid] for tid in cropped_atom_object['atom_to_token_index']])
+
+    return cropped_atom_object, cropped_token_object
 
