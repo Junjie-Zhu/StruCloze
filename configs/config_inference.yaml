@@ -1,28 +1,20 @@
 # configurations for training
 
-batch_size: 3  # batch size on single device
-n_samples: 1
-epochs: 200
-self_conditioning: False
-predict_diff: False
-checkpoint_interval: 10  # save checkpoint every n epochs
+batch_size: 1  # in inference 1 by default
 seed: 37
 deterministic: False
+self_conditioning: False
+predict_diff: False
 logging_dir: "/root/autodl-tmp/Fold-Embedder/logs"  # better absolute path, to revise
-
-resume:
-  ckpt_dir: null
-  load_model_only: False
+ckpt_dir: null
 
 data:
   path_to_dataset: "/root/autodl-tmp/pretrain_dataset/metadata.copy.csv"  # better absolute path, to revise
   path_to_ccd_info: "/root/autodl-tmp/Fold-Embedder/src/data/ccd_atom37.pkl"  # better absolute path, to revise
-  truncate_size: 384
   recenter_atoms: True
   eps: 1e-8
-  prop_train: 0.95
   shuffle: False
-  num_workers: 16
+  num_workers: 1
   pin_memory: False
 
 model:
@@ -46,25 +38,6 @@ model:
     zero_init_dit_output: True
     zero_init_atom_decoder_linear: False
   position_scaling: 16.0
-
-optimizer:
-  lr: 0.0005
-  weight_decay: 0.
-  beta1: 0.9
-  beta2: 0.999
-  use_adamw: False
-  lr_scheduler: "af3"
-  warmup_steps: 2000
-  decay_every_n_steps: 40000
-  decay_factor: 0.95
-
-loss:
-  weight_mse: 0.33
-  eps: 1e-8
-  reduction: "mean"
-  lddt_enabled: True
-  bond_enabled: True
-  clip_grad_value: 0
 
 hydra:
   run:

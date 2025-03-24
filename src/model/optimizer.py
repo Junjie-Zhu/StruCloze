@@ -63,7 +63,7 @@ def get_adamw(
 def get_optimizer(
     model: torch.nn.Module,
     lr: float,
-    weight_decay: float,
+    weight_decay: float = 0.,
     betas: tuple[float, float] = (0.9, 0.999),
     use_adamw: bool = False,
 ) -> torch.optim.Optimizer:

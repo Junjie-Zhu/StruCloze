@@ -543,6 +543,7 @@ class AllLosses(nn.Module):
                          true_positions,
                          single_mask=None,
                          pair_mask=None,
+                         bond_mask=None,
                          lddt_enabled=False,
                          bond_enabled=False
     ):
@@ -550,6 +551,8 @@ class AllLosses(nn.Module):
             single_mask = torch.ones_like(true_positions[..., 0])
         if pair_mask is None:
             pair_mask = single_mask[..., None, :] * single_mask[..., :, None]  # (batch, N, N)
+        if bond_mask is None and bond_enabled:
+            bond_mask = pair_mask
 
         losses = {}
         # Calculate MSE loss
@@ -568,13 +571,14 @@ class AllLosses(nn.Module):
         if bond_enabled:
             # Calculate Bond loss, to revise
             losses["bond_loss"] = self.bond_loss(
-                pred_distance=pred_positions,
-                true_distance=true_positions,
-                distance_mask=torch.ones_like(true_positions[..., 0]),
-                bond_mask=torch.ones_like(true_positions[..., 0]),
+                pred_distance=torch.cdist(pred_positions, pred_positions),
+                true_distance=torch.cdist(true_positions, true_positions),
+                distance_mask=pair_mask,
+                bond_mask=bond_mask,
             )
 
         cum_loss = 0
+        seperate_loss = []
         for loss_item, loss_outputs in losses.items():
             if isinstance(loss_outputs, tuple):
                 loss, metrics = loss_outputs
@@ -582,13 +586,15 @@ class AllLosses(nn.Module):
                 assert isinstance(loss_outputs, torch.Tensor)
                 loss, metrics = loss_outputs, {}
             cum_loss += loss
-        return cum_loss
+            seperate_loss.append(loss)
+        return cum_loss, seperate_loss
 
     def forward(self,
                 pred_positions,
                 true_positions,
                 single_mask=None,
                 pair_mask=None,
+                bond_mask=None,
                 lddt_enabled=False,
                 bond_enabled=False
                 ):
@@ -597,6 +603,8 @@ class AllLosses(nn.Module):
             true_positions,
             single_mask=single_mask,
             pair_mask=pair_mask,
+            bond_mask=bond_mask,
             lddt_enabled=lddt_enabled,
             bond_enabled=bond_enabled
         )
+

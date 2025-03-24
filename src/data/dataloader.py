@@ -115,3 +115,37 @@ def get_training_dataloader(
         )
 
     return train_loader, val_loader
+
+
+def get_inference_dataloader(
+        dataset: torch.utils.data.Dataset,
+        batch_size: int = 64,
+        distributed: bool = False,
+        num_workers: int = 8,
+        pin_memory: bool = False,
+):
+    batch_collator = BatchTensorConverter()
+
+    if distributed:
+        inference_sampler = DistributedSampler(
+            dataset, shuffle=False, drop_last=False
+        )
+        inference_loader = DataLoader(
+            dataset=dataset,
+            collate_fn=batch_collator,
+            batch_size=batch_size,
+            sampler=inference_sampler,
+            num_workers=num_workers,
+            pin_memory=pin_memory,
+        )
+    else:
+        inference_loader = DataLoader(
+            dataset=dataset,
+            collate_fn=batch_collator,
+            batch_size=batch_size,
+            shuffle=False,
+            num_workers=num_workers,
+            pin_memory=pin_memory,
+        )
+
+    return inference_loader

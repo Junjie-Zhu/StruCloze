@@ -23,12 +23,16 @@ class FoldEmbedder(nn.Module):
         n_atom_attn_heads: int = 4,
         n_token_attn_heads: int = 8,
         initialization: Optional[dict[str, Union[str, float, bool]]] = None,
+        position_scaling: float = 16.0,
     ):
         super(FoldEmbedder, self).__init__()
 
         self.embedding_module = EmbeddingModule(
             c_s=c_s,
             c_z=c_z,
+            c_atom=c_atom,
+            c_atompair=c_atompair,
+            c_token=c_token,
         )
         self.atom_encoder = AtomAttentionEncoder(
             has_coords=True,
@@ -66,6 +70,7 @@ class FoldEmbedder(nn.Module):
 
         # initialize parameters
         self.init_parameters(initialization)
+        self.position_scaling = position_scaling
 
     def init_parameters(self, initialization: dict):
         """
@@ -122,15 +127,16 @@ class FoldEmbedder(nn.Module):
     ) -> torch.Tensor:
 
         # scaling initial positions to ensure approximately unit variance
-        initial_positions = initial_positions / 16.
+        initial_positions = initial_positions / self.position_scaling
+        N_sample = initial_positions.shape[1]
 
         # encode token-level features
         s_single, z_pair = self.embedding_module(input_feature_dict)
 
         # add num_sample dimension
         # initial_positions = initial_positions.unsqueeze(1)
-        s_single = s_single.unsqueeze(1)
-        z_pair = z_pair.unsqueeze(1)
+        s_single = s_single.unsqueeze(1).expand(-1, N_sample, -1, -1)
+        z_pair = z_pair.unsqueeze(1).expand(-1, N_sample, -1, -1, -1)
         
         # encode atom-level features
         a_token, q_skip, c_skip, p_skip = self.atom_encoder(
@@ -159,5 +165,5 @@ class FoldEmbedder(nn.Module):
             c_skip=c_skip,
             p_skip=p_skip,
         )
-        return r_update * 16.  # rescale back to original scale
+        return r_update * self.position_scaling  # rescale back to original scale
 

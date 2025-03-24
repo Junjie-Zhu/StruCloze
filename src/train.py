@@ -1,6 +1,7 @@
 import logging
 import os
 import warnings
+from random import random
 
 import rootutils
 import datetime
@@ -12,13 +13,14 @@ from tqdm import tqdm
 import hydra
 from omegaconf import DictConfig, OmegaConf
 
-from src.data.dataset import TrainingDataset, FeatureTransform
+from src.data.dataset import ProteinTrainingDataset, BioTrainingDataset
 from src.data.dataloader import get_training_dataloader
+from src.data.transform import FeatureTransform, BioFeatureTransform
 from src.model.integral import FoldEmbedder
 from src.model.loss import AllLosses
 from src.model.optimizer import get_optimizer, get_lr_scheduler
 from src.utils.ddp_utils import DIST_WRAPPER, seed_everything
-from src.utils.model_utils import centre_random_augmentation
+from src.utils.model_utils import centre_random_augmentation, uniform_random_rotation, rot_vec_mul
 
 rootutils.setup_root(__file__, indicator=".project-root", pythonpath=True)
 warnings.filterwarnings("ignore", category=FutureWarning)
@@ -66,13 +68,21 @@ def main(args: DictConfig):
     )
 
     # instantiate dataset
-    dataset = TrainingDataset(
+    # dataset = TrainingDataset(
+    #     path_to_dataset=args.data.path_to_dataset,
+    #     transform=FeatureTransform(
+    #         truncate_size=args.data.truncate_size,
+    #         recenter_atoms=args.data.recenter_atoms,
+    #         eps=args.data.eps,
+    #         ccd_info=args.data.path_to_ccd_info
+    #     ),
+    # )
+    dataset = BioTrainingDataset(
         path_to_dataset=args.data.path_to_dataset,
-        transform=FeatureTransform(
+        transform=BioFeatureTransform(
             truncate_size=args.data.truncate_size,
             recenter_atoms=args.data.recenter_atoms,
             eps=args.data.eps,
-            ccd_info=args.data.path_to_ccd_info
         ),
     )
     train_loader, val_loader = get_training_dataloader(
@@ -98,6 +108,7 @@ def main(args: DictConfig):
         n_atom_attn_heads=args.model.n_atom_attn_heads,
         n_token_attn_heads=args.model.n_token_attn_heads,
         initialization=args.model.initialization,
+        position_scaling=args.model.position_scaling,
     ).to(device)
     if DIST_WRAPPER.world_size > 1:
         logging.info("Using DDP")
@@ -147,35 +158,40 @@ def main(args: DictConfig):
     # get model summary
     if DIST_WRAPPER.rank == 0:
         logging.info(model)
-        logging.info(f"Model has {sum(p.numel() for p in model.parameters()):,} parameters")
+        logging.info(f"Model has {sum(p.numel() for p in model.parameters()) / 1000000:.2f}M parameters")
 
     # sanity check
     torch.cuda.empty_cache()
     model.eval()
     with torch.no_grad():
         for check_iter, check_batch in enumerate(val_loader):
+            torch.cuda.empty_cache()
             check_batch = to_device(check_batch, device)
-            init_positions = centre_random_augmentation(check_batch["ref_structure"])
-            check_batch.pop("ref_structure")
+            init_positions = centre_random_augmentation(check_batch['ref_structure'])
+            # init_positions = structure_augment(check_batch)
+            check_batch.pop('atom_com')
+            check_batch.pop('ref_com')
+            check_batch.pop('ref_structure')
+
             pred_positions = model(
                 initial_positions=init_positions,
                 input_feature_dict=check_batch,
             )
-            _ = loss_fn(pred_positions,
+            _, _ = loss_fn(pred_positions,
                 check_batch['atom_positions'],
                 single_mask=check_batch['atom_mask'],
                 pair_mask=check_batch['lddt_mask'],
+                bond_mask=check_batch['bond_mask'],
                 lddt_enabled=args.loss.lddt_enabled,
                 bond_enabled=args.loss.bond_enabled
             )
-            torch.cuda.empty_cache()
             if check_iter >= 2:
                 break
     logging.info(f"Sanity check done")
 
     if DIST_WRAPPER.rank == 0:
         with open(f"{logging_dir}/loss.csv", "w") as f:
-            f.write("Epoch,Loss,Val Loss\n")
+            f.write("Epoch,Loss,Val Loss,mse,lddt,bond\n")
 
     epoch_progress = tqdm(
         total=args.epochs,
@@ -184,8 +200,10 @@ def main(args: DictConfig):
         ncols=100,  # Adjust width of the progress bar
     ) if DIST_WRAPPER.rank == 0 else None
     # Main train/eval loop
+    training_sample = args.n_samples
     for crt_epoch in range(start_epoch, args.epochs + 1):
         epoch_loss, epoch_val_loss = 0, 0
+        mse, lddt, bond = 0, 0, 0
         model.train()
 
         # Training loop with dynamic progress bar
@@ -200,39 +218,70 @@ def main(args: DictConfig):
                 ncols=100,
             )
         for crt_step, input_feature_dict in train_iter:
+            torch.cuda.empty_cache()
             input_feature_dict = to_device(input_feature_dict, device)
-            init_positions = centre_random_augmentation(input_feature_dict["ref_structure"])
-            input_feature_dict.pop("ref_structure")
+            init_positions = centre_random_augmentation(input_feature_dict['ref_structure'], training_sample)
+            # init_positions = structure_augment(input_feature_dict, training_sample)  # random rotation on each residue in init positions
+            # init_positions = input_feature_dict['atom_com'].unsqueeze(1).expand(-1, training_sample, -1, -1)
+            input_feature_dict.pop('atom_com')
+            input_feature_dict.pop('ref_com')
+            input_feature_dict.pop('ref_structure')
+
+            if args.self_conditioning and random() < 0.5:
+                with torch.no_grad():
+                    pred_positions = model(
+                        initial_positions=init_positions,
+                        input_feature_dict=input_feature_dict,
+                    )
+                if args.predict_diff:
+                    init_positions = pred_positions + init_positions
+                else:
+                    init_positions = pred_positions
 
             pred_positions = model(
                 initial_positions=init_positions,
                 input_feature_dict=input_feature_dict,
             )
+            if args.predict_diff:
+                pred_positions = pred_positions + init_positions
 
-            loss = loss_fn(pred_positions,
+            loss, loss_verbose = loss_fn(pred_positions,
                 input_feature_dict['atom_positions'],
                 single_mask=input_feature_dict['atom_mask'],
                 pair_mask=input_feature_dict['lddt_mask'],
+                bond_mask=input_feature_dict['bond_mask'],
                 lddt_enabled=args.loss.lddt_enabled,
                 bond_enabled=args.loss.bond_enabled
             )
 
             optimizer.zero_grad(set_to_none=True)
             loss.backward()
+            if args.loss.clip_grad_value > 0:
+                torch.nn.utils.clip_grad_value_(model.parameters(), args.loss.clip_grad_value)
             optimizer.step()
             scheduler.step()
 
             step_loss = loss.item()
             epoch_loss += step_loss
+            mse += loss_verbose[0].item()
+            lddt += loss_verbose[1].item()
+            bond += loss_verbose[2].item()
 
             # Update the progress bar dynamically
             if DIST_WRAPPER.rank == 0:
-                train_iter.set_postfix(step_loss=f"{step_loss:.3f}")
+                train_iter.set_postfix(step_loss=f"{step_loss:.3f}",
+                                       mse=f"{loss_verbose[0]:.3f}",
+                                       lddt=f"{loss_verbose[1]:.3f}",
+                                       bond=f"{loss_verbose[2]:.3f}")
 
-            torch.cuda.empty_cache()
+            # delete useless variables
+            del loss, loss_verbose, pred_positions
 
         # Calculate average epoch loss
         epoch_loss /= (crt_step + 1)
+        mse /= (crt_step + 1)
+        lddt /= (crt_step + 1)
+        bond /= (crt_step + 1)
 
         # Validation loop with dynamic progress bar
         model.eval()
@@ -250,17 +299,23 @@ def main(args: DictConfig):
             for crt_val_step, val_feature_dict in val_iter:
                 torch.cuda.empty_cache()
                 val_feature_dict = to_device(val_feature_dict, device)
-                init_positions = centre_random_augmentation(val_feature_dict["ref_structure"])
-                val_feature_dict.pop("ref_structure")
+                init_positions = centre_random_augmentation(val_feature_dict['ref_structure'], training_sample)
+                # init_positions = val_feature_dict['atom_com'].unsqueeze(1)
+                val_feature_dict.pop('atom_com')
+                val_feature_dict.pop('ref_com')
+                val_feature_dict.pop('ref_structure')
 
                 pred_positions = model(
                     initial_positions=init_positions,
                     input_feature_dict=val_feature_dict,
                 )
-                val_loss = loss_fn(pred_positions,
+                if args.predict_diff:
+                    pred_positions = pred_positions + init_positions
+                val_loss, _ = loss_fn(pred_positions,
                     val_feature_dict['atom_positions'],
                     single_mask=val_feature_dict['atom_mask'],
                     pair_mask=val_feature_dict['lddt_mask'],
+                    bond_mask=val_feature_dict['bond_mask'],
                     lddt_enabled=args.loss.lddt_enabled,
                     bond_enabled=args.loss.bond_enabled
                 )
@@ -281,7 +336,8 @@ def main(args: DictConfig):
 
             # Append loss data to file
             with open(f"{logging_dir}/loss.csv", "a") as f:
-                f.write(f"{crt_epoch},{epoch_loss},{epoch_val_loss}\n")
+                f.write(f"{crt_epoch},{epoch_loss},{epoch_val_loss},"
+                        f"{mse},{lddt},{bond}\n")
 
             # Save checkpoint only on master process
             if crt_epoch % args.checkpoint_interval == 0 or crt_epoch == args.epochs:
@@ -291,7 +347,6 @@ def main(args: DictConfig):
                     'model_state_dict': model.module.state_dict() if DIST_WRAPPER.world_size > 1 else model.state_dict(),
                     'optimizer_state_dict': optimizer.state_dict(),
                     'scheduler_state_dict': scheduler.state_dict(),
-                    'loss': epoch_loss,
                 }, checkpoint_path)
 
         torch.cuda.empty_cache()
@@ -299,6 +354,29 @@ def main(args: DictConfig):
     # Clean up process group when finished
     if DIST_WRAPPER.world_size > 1:
         dist.destroy_process_group()
+
+
+def structure_augment(input_feature_dict,
+                      n_samples=1):
+    token_index = input_feature_dict["token_index"]
+    atom_to_token_index = input_feature_dict["atom_to_token_index"]
+    B, N_token = token_index.shape
+    _, N_atom = atom_to_token_index.shape
+
+    atom_com = input_feature_dict["atom_com"].unsqueeze(1).expand(B, n_samples, N_atom, 3)
+
+    # random rotation on reference positions
+    rot_matrix = uniform_random_rotation(B * n_samples * N_token).view(B, n_samples, N_token, 3, 3).to(atom_com.device)
+    rot_matrix = rot_matrix.gather(2,
+        atom_to_token_index.unsqueeze(1).unsqueeze(-1).unsqueeze(-1).expand(B, n_samples, N_atom, 3, 3)
+    )
+
+    ref_structure = rot_vec_mul(
+        r=rot_matrix,
+        t=input_feature_dict['ref_positions'].unsqueeze(1).expand(B, n_samples, N_atom, 3)
+    ) + atom_com
+
+    return ref_structure
 
 
 def to_device(obj, device):
