@@ -60,9 +60,7 @@ class RelativePositionEncoding(nn.Module):
                   + self.r_max,
             min=0,
             max=2 * self.r_max,
-        ) * b_same_chain + (1 - b_same_chain) * (
-                            2 * self.r_max + 1
-                    )  # [..., N_token, N_token]
+        ) * b_same_chain + (1 - b_same_chain) * (2 * self.r_max + 1)  # [..., N_token, N_token]
         a_rel_pos = F.one_hot(d_residue, 2 * (self.r_max + 1))
 
         d_token = torch.clip(
