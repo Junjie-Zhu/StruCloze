@@ -439,3 +439,48 @@ ELEMENT_MAPPING = {
     'H': 1, 'HE': 2, 'LI': 3, 'BE': 4, 'B': 5, 'C': 6, 'N': 7, 'O': 8, 'F': 9, 'NE': 10,
     'NA': 11, 'MG': 12, 'AL': 13, 'SI': 14, 'P': 15, 'S': 16,
 }
+
+van_der_waals_radius = {
+    'C': 1.7,
+    'N': 1.55,
+    'O': 1.52,
+    'S': 1.8,
+    'P': 1.8
+}
+
+chi_angles_atoms = {
+    'ALA': [],
+    # Chi5 in arginine is always 0 +- 5 degrees, so ignore it.
+    'ARG': [['N', 'CA', 'CB', 'CG'], ['CA', 'CB', 'CG', 'CD'],
+            ['CB', 'CG', 'CD', 'NE'], ['CG', 'CD', 'NE', 'CZ']],
+    'ASN': [['N', 'CA', 'CB', 'CG'], ['CA', 'CB', 'CG', 'OD1']],
+    'ASP': [['N', 'CA', 'CB', 'CG'], ['CA', 'CB', 'CG', 'OD1']],
+    'CYS': [['N', 'CA', 'CB', 'SG']],
+    'GLN': [['N', 'CA', 'CB', 'CG'], ['CA', 'CB', 'CG', 'CD'],
+            ['CB', 'CG', 'CD', 'OE1']],
+    'GLU': [['N', 'CA', 'CB', 'CG'], ['CA', 'CB', 'CG', 'CD'],
+            ['CB', 'CG', 'CD', 'OE1']],
+    'GLY': [],
+    'HIS': [['N', 'CA', 'CB', 'CG'], ['CA', 'CB', 'CG', 'ND1']],
+    'ILE': [['N', 'CA', 'CB', 'CG1'], ['CA', 'CB', 'CG1', 'CD1']],
+    'LEU': [['N', 'CA', 'CB', 'CG'], ['CA', 'CB', 'CG', 'CD1']],
+    'LYS': [['N', 'CA', 'CB', 'CG'], ['CA', 'CB', 'CG', 'CD'],
+            ['CB', 'CG', 'CD', 'CE'], ['CG', 'CD', 'CE', 'NZ']],
+    'MET': [['N', 'CA', 'CB', 'CG'], ['CA', 'CB', 'CG', 'SD'],
+            ['CB', 'CG', 'SD', 'CE']],
+    'PHE': [['N', 'CA', 'CB', 'CG'], ['CA', 'CB', 'CG', 'CD1']],
+    'PRO': [['N', 'CA', 'CB', 'CG'], ['CA', 'CB', 'CG', 'CD']],
+    'SER': [['N', 'CA', 'CB', 'OG']],
+    'THR': [['N', 'CA', 'CB', 'OG1']],
+    'TRP': [['N', 'CA', 'CB', 'CG'], ['CA', 'CB', 'CG', 'CD1']],
+    'TYR': [['N', 'CA', 'CB', 'CG'], ['CA', 'CB', 'CG', 'CD1']],
+    'VAL': [['N', 'CA', 'CB', 'CG1']],
+}
+
+na_pseudo_rotation = [
+    ["O4'", "C1'", "C2'", "C3'"],
+    ["C1'", "C2'", "C3'", "C4'"],
+    ["C2'", "C3'", "C4'", "O4'"],
+    ["C3'", "C4'", "O4'", "C1'"],
+    ["C4'", "O4'", "C1'", "C2'"],
+]

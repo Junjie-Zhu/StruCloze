@@ -35,7 +35,7 @@ def to_pdb(
     with open(os.path.join(output_dir, f"{input_feature_dict['accession_code']}.pdb"), 'w') as f:
         for i in range(atom_positions.shape[0]):
             f.write(
-                f'ATOM  {i + 1:>5} {element_[i]:<4} {restype_[i]:>3} A{atom_to_token_index[i] + 1:>4}    '
+                f'ATOM  {i + 1:>5} {element_[i]:<4} {restype_[i]:>3} {chain_index[i]}{atom_to_token_index[i] + 1:>4}    '
                 f'{atom_positions[i][0]:>8.3f}{atom_positions[i][1]:>8.3f}{atom_positions[i][2]:>8.3f}'
                 f'  1.00  0.00           {element_[i][0]:>2}\n'
             )
