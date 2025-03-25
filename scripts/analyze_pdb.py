@@ -111,3 +111,56 @@ def get_pseudo_rotation(structure):
         puckers.append(pucker_type)
     return pseudo_rotations, puckers
 
+
+def get_hbond(
+    distance,
+    ref_distance,
+    ref_structure,
+    threshold=3.5
+):
+    assert distance.shape == ref_distance.shape, "Distance matrices must have the same shape"
+
+    restype = ref_structure.res_name
+    atomtype = ref_structure.atom_name
+
+    single_mask = np.zeros(distance.shape[0])
+    res_index = 0
+    unique_res = ""
+    for idx, (res, atom) in enumerate(zip(restype, atomtype)):
+        if res not in bc.base_pair_atoms.keys():
+            continue
+
+        if res != unique_res:
+            res_index += 1
+            unique_res = res
+
+        if atom in bc.base_pair_atoms[res]:
+            single_mask[idx] = res_index
+
+    pair_mask = (single_mask[:, np.newaxis] - single_mask[np.newaxis, :]) != 0  # get atoms from different bases
+    hbond = (distance < threshold) & pair_mask
+    ref_hbond = (ref_distance < threshold) & pair_mask
+
+    return np.sum(hbond & ref_hbond), np.sum(ref_hbond & ~hbond), np.sum(~ref_hbond & hbond)  # TP, TN, FP
+
+
+if __name__ == '__main__':
+    # test with an example pdb file
+    structure = load_structure("example.pdb")
+    ref_structure = load_structure("example.pdb")
+
+    distance, atom_elements = get_distance_matrix(structure)
+    ref_distance, _ = get_distance_matrix(ref_structure)
+
+    clashes = get_steric_clashes(distance, atom_elements)
+
+    rmsd = get_all_atom_rmsd(structure, ref_structure)
+
+    phi, psi = get_backbone_dihedrals(structure)
+
+    chi_angles = get_chi_angles(structure)
+
+    pseudo_rotations, puckers = get_pseudo_rotation(structure)
+
+    hbond = get_hbond(distance, ref_distance, ref_structure)
+
