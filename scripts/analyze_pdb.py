@@ -1,13 +1,45 @@
+import gzip
 import os
+import multiprocessing as mp
+import argparse
+import pickle
+from functools import partial
+import warnings
 
+import pandas as pd
+from tqdm import tqdm
+import torch
 import biotite.structure as struc
 import biotite.structure.io as strucio
 import biotite.structure.io.pdbx as pdbx
 import numpy as np
+from tqdm import tqdm
 
 import biom_constants as bc
 
+warnings.filterwarnings("ignore", category=UserWarning)
+
 NA_keys = ["A", "G", "C", "U", "N", "DA", "DG", "DC", "DT", "DN"]
+
+
+def convert_atom_name_id(onehot_tensor: torch.Tensor):
+    """
+        Converts integer of atom_name to unique atom_id names.
+        Each character is encoded as chr(c + 32)
+    """
+    # Create reverse mapping from one-hot index to characters
+    index_to_char = {index: chr(key + 32) for key, index in enumerate(range(64))}
+
+    # Extract atom names from the tensor
+    atom_names = []
+    for atom_encode in onehot_tensor:
+        atom_name = ''
+        for char_onehot in atom_encode:
+            index = char_onehot.argmax().item()  # Find the index of the maximum value
+            atom_name += index_to_char[index]
+        atom_names.append(atom_name.strip())  # Remove padding spaces
+
+    return atom_names
 
 
 def load_structure(file_path):
@@ -18,31 +50,40 @@ def load_structure(file_path):
         return pdbx.get_structure(cif_file)[0]
 
 
-def get_distance_matrix(structure):
+def get_distance_matrix(
+    structure,
+    sparse = False
+):
     coords = structure.coord
     atom_elements = structure.element
 
     # Calculate pairwise distances
-    distance = coords[:, np.newaxis, :] - coords[np.newaxis, :, :]
-    distance = np.linalg.norm(distance, axis=2)
+    if not sparse:
+        distance = coords[:, np.newaxis, :] - coords[np.newaxis, :, :]
+        distance = np.linalg.norm(distance, axis=2)
+    else:
+        distance = np.concatenate(
+            [np.linalg.norm(coords[i] - coords[i + 1:], axis=1) for i in range(len(coords) - 1)],
+        )
 
     return distance, atom_elements
 
 
 def get_steric_clashes(
-    distance_matrix, atom_elements, threshold=0.4
+    distance_matrix, atom_elements, threshold=0.4, sparse=False
 ):
     # Calculate the sum of the van der Waals radii for each pair of atoms
-    sum_radii = np.array(
-        [
-            bc.van_der_waals_radius[atom_elements[i]] + bc.van_der_waals_radius[atom_elements[j]]
-            for i in range(len(atom_elements))
-            for j in range(i + 1, len(atom_elements))
-        ]
-    )
+    atom_radii = np.array([bc.van_der_waals_radius[element] for element in atom_elements])
+    i, j = np.triu_indices(len(atom_elements), k=1)  # Upper triangular indices
+    sum_radii = atom_radii[i] + atom_radii[j]
+
+    if not sparse:
+        distance_matrix = np.concatenate(
+            [distance_matrix[i, i + 1:] for i in range(len(distance_matrix) - 1)]
+        )
 
     clashes = distance_matrix < sum_radii - threshold
-    return clashes
+    return np.sum(clashes) / len(distance_matrix)
 
 
 def get_all_atom_rmsd(
@@ -100,9 +141,9 @@ def get_pseudo_rotation(structure):
             np.arctan2((angles[4] - angles[1]) - (angles[3] - angles[0]), 2 * angles[2])
         ) % 360
 
-        if 0 <= pseudo_angle <= 36 or 324 <= pseudo_angle <= 360:
+        if 0 <= pseudo_angle <= 60 or 300 <= pseudo_angle <= 360:
             pucker_type = 3
-        elif 144 <= pseudo_angle <= 216:
+        elif 120 <= pseudo_angle <= 240:
             pucker_type = 2
         else:
             pucker_type = 0
@@ -116,14 +157,23 @@ def get_hbond(
     distance,
     ref_distance,
     ref_structure,
-    threshold=3.5
+    threshold=3.5,
+    sparse=False
 ):
     assert distance.shape == ref_distance.shape, "Distance matrices must have the same shape"
+
+    if not sparse:
+        distance = np.concatenate(
+            [distance[i, i + 1:] for i in range(len(distance) - 1)]
+        )
+        ref_distance = np.concatenate(
+            [ref_distance[i, i + 1:] for i in range(len(ref_distance) - 1)]
+        )
 
     restype = ref_structure.res_name
     atomtype = ref_structure.atom_name
 
-    single_mask = np.zeros(distance.shape[0])
+    single_mask = np.zeros(atomtype.shape[0])
     res_index = 0
     unique_res = ""
     for idx, (res, atom) in enumerate(zip(restype, atomtype)):
@@ -137,30 +187,106 @@ def get_hbond(
         if atom in bc.base_pair_atoms[res]:
             single_mask[idx] = res_index
 
-    pair_mask = (single_mask[:, np.newaxis] - single_mask[np.newaxis, :]) != 0  # get atoms from different bases
+    i, j = np.triu_indices(len(single_mask), k=1)
+    pair_mask = (single_mask[i] != single_mask[j]) & (single_mask[i] != 0) & (single_mask[j] != 0)
+
     hbond = (distance < threshold) & pair_mask
     ref_hbond = (ref_distance < threshold) & pair_mask
 
-    return np.sum(hbond & ref_hbond), np.sum(ref_hbond & ~hbond), np.sum(~ref_hbond & hbond)  # TP, TN, FP
+    return np.sum(ref_hbond & hbond), np.sum(ref_hbond & ~hbond), np.sum(~ref_hbond & hbond)  # TP, TN, FP
+
+
+def process_fn(
+    input_path,
+    reference_dir,
+    output_dir,
+    sparse=False
+):
+    accession_code = os.path.basename(input_path).split(".")[0]
+    accession_code = accession_code.replace("['", "").replace("']", "")
+
+    structure = load_structure(input_path)
+    reference_path = os.path.join(reference_dir, accession_code + ".pkl.gz")
+    with gzip.open(reference_path, "rb") as f:
+        ref_structure_data = pickle.load(f)
+
+    distance, atom_elements = get_distance_matrix(structure, sparse=sparse)
+    clashes = get_steric_clashes(distance, atom_elements, sparse=sparse)
+    phi, psi = get_backbone_dihedrals(structure)
+    chi_angles = get_chi_angles(structure)
+
+    dihedrals = {
+        "phi": phi,
+        "psi": psi,
+        "chi_angles": chi_angles,
+    }
+
+    struc_mask = (np.array(ref_structure_data["atom_positions"]) == 0.).astype(float)
+    struc_mask = (np.sum(struc_mask, axis=1) == 0.).astype(bool)
+    structure = structure[struc_mask]
+
+    # construct ref_structure with data in dictionary
+    ref_structure = struc.AtomArray(np.sum(struc_mask))
+    ref_structure.coord = ref_structure_data["atom_positions"][struc_mask]
+    ref_structure.atom_name = structure.atom_name
+    ref_structure.element = structure.element
+    ref_structure.res_name = structure.res_name
+
+    try:
+        rmsd = get_all_atom_rmsd(structure, ref_structure)
+    except:
+        rmsd = np.nan
+
+    with gzip.open(os.path.join(output_dir, accession_code + ".dih.pkl.gz"), "wb") as f:
+        pickle.dump(dihedrals, f)
+    del dihedrals, phi, psi, chi_angles
+
+    return {
+        "accession_code": accession_code,
+        "clashes": clashes,
+        "rmsd": rmsd,
+    }
 
 
 if __name__ == '__main__':
-    # test with an example pdb file
-    structure = load_structure("example.pdb")
-    ref_structure = load_structure("example.pdb")
+    args = argparse.ArgumentParser()
+    args.add_argument('--input_dir', type=str, required=True)
+    args.add_argument('--reference_dir', type=str, required=True)
+    args.add_argument('--output_dir', type=str, required=True)
+    args = args.parse_args()
 
-    distance, atom_elements = get_distance_matrix(structure)
-    ref_distance, _ = get_distance_matrix(ref_structure)
+    process_fn_ = partial(
+        process_fn,
+        reference_dir=args.reference_dir,
+        output_dir=args.output_dir,
+    )
 
-    clashes = get_steric_clashes(distance, atom_elements)
+    if not os.path.exists(args.output_dir):
+        os.makedirs(args.output_dir)
 
-    rmsd = get_all_atom_rmsd(structure, ref_structure)
+    cpu_num = os.cpu_count()
+    input_files = [os.path.join(args.input_dir, f)
+        for f in os.listdir(args.input_dir)
+        if f.endswith(".pdb")]
 
-    phi, psi = get_backbone_dihedrals(structure)
+    if cpu_num > 1:
+        with mp.Pool(cpu_num) as p:
+            results = list(tqdm(p.imap(process_fn_, input_files), total=len(input_files), desc='Processing'))
+    else:
+        results = []
+        for f in tqdm(input_files, desc='Processing'):
+            results.append(process_fn_(f))
 
-    chi_angles = get_chi_angles(structure)
+    metadata = {
+        "accession_code": [],
+        "clashes": [],
+        "rmsd": [],
+    }
+    for r in results:
+        metadata["accession_code"].append(r["accession_code"])
+        metadata["clashes"].append(r["clashes"])
+        metadata["rmsd"].append(r["rmsd"])
+    metadata = pd.DataFrame(metadata)
+    metadata.to_csv(os.path.join(args.output_dir, "metadata.csv"), index=False)
 
-    pseudo_rotations, puckers = get_pseudo_rotation(structure)
-
-    hbond = get_hbond(distance, ref_distance, ref_structure)
-
+    print(f'Clash: {metadata["clashes"].mean()}, RMSD: {metadata["rmsd"].mean()}')
