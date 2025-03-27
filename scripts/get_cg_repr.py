@@ -11,6 +11,7 @@ import multiprocessing as mp
 import biotite.structure as struc
 import biotite.structure.io.pdbx as pdbx
 import numpy as np
+import pandas as pd
 from tqdm import tqdm
 
 import biom_constants as bc
@@ -112,6 +113,7 @@ def get_cg_repr(
 
     # cg representation
     atom_ca = []
+    atom_com = []
     ref_com = []
 
     token_id = 0
@@ -175,8 +177,11 @@ def get_cg_repr(
         ref_atom_name_chars.append(atom_name_chars[ref_mask])
 
         atom_ca.append(np.array([ca] * np.sum(ref_mask)))
+        atom_com.append(
+            np.tile(calc_center_of_mass(pos, weight, ref_mask)[np.newaxis, :], (np.sum(ref_mask), 1))
+        )
         ref_com.append(
-            calc_center_of_mass(ref_pos, weight, ref_mask)
+            np.tile(calc_center_of_mass(ref_pos, weight, ref_mask)[np.newaxis, :], (np.sum(ref_mask), 1))
         )
 
         # update token_id and chain_id
@@ -200,7 +205,8 @@ def get_cg_repr(
         "ref_atom_name_chars": np.concatenate(ref_atom_name_chars),
 
         "atom_ca": np.concatenate(atom_ca),
-        "ref_com": np.array(ref_com),
+        "atom_com": np.concatenate(atom_com),
+        "ref_com": np.concatenate(ref_com),
     }
 
 
@@ -213,13 +219,19 @@ def process_fn(
     try:
         cg_repr = get_cg_repr(structure)
     except ValueError as e:
-        return f"{os.path.basename(input_path).replace('.cif', '')}\t{e}"
+        return {}, f"{os.path.basename(input_path).replace('.cif', '')}\t{e}"
 
     output_path = os.path.join(output_dir, f"{os.path.basename(input_path).replace('.cif', '')}.pkl.gz")
     with gzip.open(output_path, "wb") as f:
         pickle.dump(cg_repr, f, protocol=pickle.HIGHEST_PROTOCOL)
 
-    return None
+    metadata = {
+        "accession_code": os.path.basename(input_path).replace('.cif', ''),
+        "token_num": len(cg_repr["token_index"]),
+        "moltype": np.unique(cg_repr["moltype"]),
+    }
+
+    return metadata, None
 
 
 if __name__ == '__main__':
@@ -241,13 +253,27 @@ if __name__ == '__main__':
     cpu_num = os.cpu_count()
     if cpu_num > 1:
         with mp.Pool(cpu_num) as pool:
-            results = list(tqdm(pool.imap(process_fn_, target_files), total=len(target_files)))
+            results = list(tqdm(pool.imap_unordered(process_fn_, target_files), total=len(target_files)))
     else:
         results = []
         for target_file in tqdm(target_files):
             results.append(process_fn_(target_file))
 
-    # remove None values
-    results = [i for i in results if i is not None]
+    metadata = {
+        "accession_code": [],
+        "token_num": [],
+        "moltype": [],
+    }
+    error = []
+    for result in results:
+        if result[1] is not None:
+            error.append(result[1])
+        else:
+            metadata["accession_code"].append(result[0]["accession_code"])
+            metadata["token_num"].append(result[0]["token_num"])
+            metadata["moltype"].append(result[0]["moltype"])
+
+    metadata = pd.DataFrame(metadata)
+    metadata.to_csv(os.path.join(args.output_dir, "metadata.csv"), index=False)
     with open(os.path.join(args.output_dir, "error.log"), "w") as f:
-        f.write("\n".join(results))
+        f.write("\n".join(error))
