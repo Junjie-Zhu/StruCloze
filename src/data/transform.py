@@ -281,6 +281,7 @@ class BioFeatureTransform:
                  truncate_size: Optional[int] = None,
                  recenter_atoms: bool = True,
                  eps: float = 1e-8,
+                 training: bool = True
                  ):
 
         if truncate_size is not None:
@@ -289,6 +290,7 @@ class BioFeatureTransform:
 
         self.recenter_and_scale = recenter_atoms
         self.eps = eps
+        self.training = training
 
     def __call__(self, data_object):
         atom_object, token_object = self.patch_features(data_object)
@@ -305,7 +307,7 @@ class BioFeatureTransform:
         data_object = {**atom_object, **token_object}
 
         data_object = self.map_to_tensors(data_object)
-        data_object = self.update_ref_features(data_object)
+        data_object = self.update_ref_features(data_object, training=self.training)
         return data_object
 
     @staticmethod
@@ -355,30 +357,33 @@ class BioFeatureTransform:
             return spatial_truncate(atom_object, token_object, truncate_size)
 
     @staticmethod
-    def update_ref_features(data_object, translation_scale=1.5):
+    def update_ref_features(data_object, translation_scale=1.5, training=True):
         data_object['ref_space_uid'] = data_object['atom_to_token_index']
         ref_positions = data_object['ref_positions']
 
-        # Add random rotation and translation
-        moltype = (data_object['moltype'] > 0).float() + 1.
-        translation = (torch.randn((data_object['token_index'].shape[0], 3)) *
-                       (moltype[:, None] * translation_scale))  # 2-fold deviation for nucleotides
-        translation_expand = [translation[i] for i in data_object['atom_to_token_index']]
-        translation = torch.stack(translation_expand, dim=0)
+        if training:
+            # Add random rotation and translation
+            moltype = (data_object['moltype'] > 0).float() + 1.
+            translation = (torch.randn((data_object['token_index'].shape[0], 3)) *
+                           (moltype[:, None] * translation_scale))  # 2-fold deviation for nucleotides
+            translation_expand = [translation[i] for i in data_object['atom_to_token_index']]
+            translation = torch.stack(translation_expand, dim=0)
+            ref_positions += translation
 
         rot_matrix = uniform_random_rotation(data_object['token_index'].shape[0])
         rot_matrix_expand = [rot_matrix[i] for i in data_object['atom_to_token_index']]
         rot_matrix = torch.stack(rot_matrix_expand, dim=0)
         ref_positions = rot_vec_mul(
             r=rot_matrix,
-            t=ref_positions - data_object['ref_com'] + translation,
+            t=ref_positions - data_object['ref_com'],
         )
         data_object['ref_structure'] = ref_positions + data_object['atom_com']
 
-        # add masks for loss
-        atom_distances = (data_object['atom_positions'][:, None, :] - data_object['atom_positions'][None, :, :]).norm(dim=-1)
-        data_object['lddt_mask'] = atom_distances < 15.0
-        data_object['bond_mask'] = atom_distances < 5.0
+        if training:
+            # add masks for loss
+            atom_distances = (data_object['atom_positions'][:, None, :] - data_object['atom_positions'][None, :, :]).norm(dim=-1)
+            data_object['lddt_mask'] = atom_distances < 15.0
+            data_object['bond_mask'] = atom_distances < 5.0
         return data_object
 
 

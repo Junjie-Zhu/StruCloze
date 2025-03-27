@@ -12,8 +12,8 @@ from tqdm import tqdm
 import hydra
 from omegaconf import DictConfig, OmegaConf
 
-from src.data.dataset import InferenceDataset
-from src.data.transform import FeatureTransform
+from src.data.dataset import InferenceDataset, BioInferenceDataset
+from src.data.transform import FeatureTransform, BioFeatureTransform
 from src.data.dataloader import get_inference_dataloader
 from src.model.integral import FoldEmbedder
 from src.utils.ddp_utils import DIST_WRAPPER, seed_everything
@@ -65,13 +65,22 @@ def main(args: DictConfig):
     )
 
     # instantiate dataset
-    dataset = InferenceDataset(
+    #dataset = InferenceDataset(
+    #    path_to_dataset=args.data.path_to_dataset,
+    #    suffix='pkl',
+    #    transform=FeatureTransform(
+    #        recenter_atoms=args.data.recenter_atoms,
+    #        eps=args.data.eps,
+    #        ccd_info=args.data.path_to_ccd_info
+    #    ),
+    #)
+    dataset = BioInferenceDataset(
         path_to_dataset=args.data.path_to_dataset,
-        suffix='pkl',
-        transform=FeatureTransform(
+        suffix='pkl.gz',
+        transform=BioFeatureTransform(
             recenter_atoms=args.data.recenter_atoms,
             eps=args.data.eps,
-            ccd_info=args.data.path_to_ccd_info
+            training=False,
         ),
     )
     inference_loader = get_inference_dataloader(
@@ -120,8 +129,8 @@ def main(args: DictConfig):
     with torch.no_grad():
         for inference_iter, inference_batch in tqdm(enumerate(inference_loader)):
             inference_batch = to_device(inference_batch, device)
-            init_positions = structure_augment(inference_batch, n_samples=1)
-            # inference_batch.pop("ref_structure")
+            # init_positions = structure_augment(inference_batch, n_samples=1)
+            init_positions = inference_batch["ref_structure"].unsqueeze(1)
 
             pred_positions = model(
                 initial_positions=init_positions,
@@ -173,3 +182,4 @@ def to_device(obj, device):
 
 if __name__ == '__main__':
     main()
+

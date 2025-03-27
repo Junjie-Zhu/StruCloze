@@ -3,7 +3,7 @@ import os
 import pickle
 import string
 import multiprocessing as mp
-from multiprocessing.managers import Value
+from typing import Optional
 
 import biotite.structure as struc
 import biotite.structure.io.pdbx as pdbx
@@ -19,6 +19,13 @@ CHAIN_TO_INT = {
     chain_char: i for i, chain_char in enumerate(ALPHANUMERIC)
 }
 COMPONENT_FILE = './protenix_dataset/components.v20240608.cif'
+ccd_cif = pdbx.CIFFile.read(COMPONENT_FILE)
+
+onehot_dict = {}
+for index, key in enumerate(range(32)):
+    onehot = [0] * 32
+    onehot[index] = 1
+    onehot_dict[key] = onehot
 
 
 def chain_str_to_int(chain_str: str):
@@ -49,22 +56,53 @@ def convert_atom_id_name(atom_names: str):
     return onehot_tensor
 
 
+def calc_center_of_mass(
+    atom_positions: np.ndarray,
+    atom_masses: np.ndarray,
+    mask: Optional[np.ndarray] = None,
+):
+    """
+    Calculate the center of mass of the atoms in a residue.
+    """
+    # Calculate the center of mass
+    if mask is not None:
+        atom_positions = atom_positions[mask]
+        atom_masses = atom_masses[mask]
+    return np.sum(atom_positions * atom_masses[:, None], axis=0) / np.sum(atom_masses)
+
+
 def write_to_pkl(
         protein_dict: dict,
         output_dir: str,
+        compress: bool = True,
 ):
-    with open(output_dir, "wb") as f:
-        pickle.dump(protein_dict, f, protocol=pickle.HIGHEST_PROTOCOL)
+    if compress:
+        with gzip.open(output_dir, "wb") as f:
+            pickle.dump(protein_dict, f, protocol=pickle.HIGHEST_PROTOCOL)
+    else:
+        with open(output_dir, "wb") as f:
+            pickle.dump(protein_dict, f, protocol=pickle.HIGHEST_PROTOCOL)
 
 
-def process_single_pkl(file_path):
-    with gzip.open(file_path, 'rb') as f:
-        data = pickle.load(f)
+def write_to_fasta(
+        sequences: dict,
+        output_dir: str,
+):
+    with open(output_dir, 'w') as f:
+        for key, value in sequences.items():
+            f.write(f">{key}\n")
+            f.write(f"{value}\n")
+
+
+def process_single_cif(
+    file_path: str,
+):
+    structure = pdbx.CIFFile.read(file_path)
 
     # atom-level features
     atom_positions = []
     atom_to_token_index = []
-    atom_mask = []
+    atom_com = []
 
     # token-level features
     aatype = []
@@ -75,17 +113,20 @@ def process_single_pkl(file_path):
 
     # reference features
     ref_positions = []
-    ref_mask = []
     ref_element = []
     ref_atom_name_chars = []
+    ref_com = []
 
-    atom_array = data['atom_array']  # a biotite atom array
+    atom_array = pdbx.get_structure(structure)[0]  # a biotite atom array
     token_id = 0
     chain_id = 0
     chain_id_str = None
     for residues in struc.residue_iter(atom_array):
         if residues[0].hetero:
             continue  # do not process ligands
+
+        comp = pdbx.get_component(ccd_cif, data_block=residues[0].res_name, use_ideal_coord=True)
+        comp = comp[~np.isin(comp.element, ["H", "D"])]
 
         restype_idx = bc.STD_RESIDUES.get(residues[0].res_name, 31)
         if restype_idx <= 20:
@@ -106,12 +147,45 @@ def process_single_pkl(file_path):
             pos[bc.RES_ATOMS_DICT[residues[0].res_name][atom.atom_name]] = atom.coord
             mask[bc.RES_ATOMS_DICT[residues[0].res_name][atom.atom_name]] = 1.
 
-        if np.mean(mask) < 0.3:
-            raise ValueError(f"Too many missing atoms in {file_path}")
+        if np.mean(mask) < 0.3:  # skip incomplete residues
+            continue
+
+        ref_pos = np.zeros((len(bc.RES_ATOMS_DICT[residues[0].res_name]), 3))
+        ref_mask = np.zeros((len(bc.RES_ATOMS_DICT[residues[0].res_name]),))
+        element = np.zeros((len(bc.RES_ATOMS_DICT[residues[0].res_name]), 32))
+        weight = np.zeros((len(bc.RES_ATOMS_DICT[residues[0].res_name]),))
+        atom_name_chars = np.zeros((len(bc.RES_ATOMS_DICT[residues[0].res_name]), 4, 64))
+        for atom in comp:
+            if atom.atom_name not in bc.RES_ATOMS_DICT[residues[0].res_name]:
+                continue
+            ref_pos[bc.RES_ATOMS_DICT[residues[0].res_name][atom.atom_name]] = atom.coord
+            ref_mask[bc.RES_ATOMS_DICT[residues[0].res_name][atom.atom_name]] = 1.
+            element[bc.RES_ATOMS_DICT[residues[0].res_name][atom.atom_name]] = onehot_dict[bc.ELEMENT_MAPPING[atom.element]]
+            weight[bc.RES_ATOMS_DICT[residues[0].res_name][atom.atom_name]] = bc.WEIGHT_MAPPING[atom.element]
+            atom_name_chars[bc.RES_ATOMS_DICT[residues[0].res_name][atom.atom_name]] = convert_atom_id_name(atom.atom_name)
+
+        # get masked features
+        mask = (mask * ref_mask).astype(bool)
+        pos = pos[mask]
+        a2t_id = a2t_id[mask]
+        ref_pos = ref_pos[mask]
+        element = element[mask]
+        weight = weight[mask]
+        atom_name_chars = atom_name_chars[mask]
+
+        # calculate COM
+        com = calc_center_of_mass(
+            atom_positions=pos,
+            atom_masses=weight,
+        )
+        r_com = calc_center_of_mass(
+            atom_positions=ref_pos,
+            atom_masses=weight,
+        )
 
         atom_positions.append(pos)
-        atom_mask.append(mask)
         atom_to_token_index.append(a2t_id)
+        atom_com.append(np.tile(com[np.newaxis, :], (pos.shape[0], 1)))
 
         aatype.append(restype_idx)
         moltype.append(mol_type)
@@ -119,11 +193,10 @@ def process_single_pkl(file_path):
         token_index.append(token_id)
         chain_index.append(chain_id)
 
-        # ref_pos, _mask, _element, _atom_name_chars = get_ccd_features(residues[0].res_name)
-        # ref_positions.append(ref_pos)
-        # ref_mask.append(_mask)
-        # ref_element.append(_element)
-        # ref_atom_name_chars.append(_atom_name_chars)
+        ref_positions.append(ref_pos)
+        ref_element.append(element)
+        ref_atom_name_chars.append(atom_name_chars)
+        ref_com.append(np.tile(r_com[np.newaxis, :], (ref_pos.shape[0], 1)))
 
         # update token_id and chain_id
         token_id += 1
@@ -134,8 +207,8 @@ def process_single_pkl(file_path):
     # concat data
     biom_dict = {
         "atom_positions": np.concatenate(atom_positions, axis=0),  # N_atom, 3
-        "atom_mask": np.concatenate(atom_mask, axis=0),  # N_atom
         "atom_to_token_index": np.concatenate(atom_to_token_index, axis=0),  # N_atom
+        "atom_com": np.concatenate(atom_com, axis=0),  # N_atom, 3
 
         "aatype": np.array(aatype),  # N_token
         "moltype": np.array(moltype),  # N_token
@@ -144,10 +217,13 @@ def process_single_pkl(file_path):
         "chain_index": np.array(chain_index),  # N_token
 
         "ref_positions": np.concatenate(ref_positions, axis=0),  # N_atom, 3
-        "ref_mask": np.concatenate(ref_mask, axis=0),  # N_atom
         "ref_element": np.concatenate(ref_element, axis=0),  # N_atom, 32
         "ref_atom_name_chars": np.concatenate(ref_atom_name_chars, axis=0),  # N_atom, 4, 64
+        "ref_com": np.concatenate(ref_com, axis=0),  # N_atom, 3
     }
+
+    if len(biom_dict['token_index']) < 10:
+        raise ValueError(f"Too few tokens: {file_path} {len(biom_dict['token_index'])}")
 
     # get basic entry information
     biom_accession_code = os.path.basename(file_path).split('.')[0]
@@ -160,10 +236,27 @@ def process_single_pkl(file_path):
         "token_num": biom_token_num,
         "type": biom_type,
     }
+
     return biom_dict, biom_metadata
 
 
-ccd_cif = pdbx.CIFFile.read(COMPONENT_FILE)
+def get_sequence_str(biom_dict):
+    sequences = []
+
+    chain_mask = {
+        chain_id: biom_dict['chain_index'] == chain_id for chain_id in range(np.max(biom_dict['chain_index']) + 1)
+    }
+    for chain_id, chain_mask in chain_mask.items():
+        if biom_dict['moltype'][chain_mask][0] != 0:
+            continue  # do not process non-protein chains
+        sequence = ''
+        aatype = biom_dict['aatype'][chain_mask]
+        for aa in aatype:
+            sequence += bc.restype_idx_to1[aa]
+        sequences.append(sequence)
+    return sequences
+
+
 def get_ccd_features(ccd_code):
     comp = pdbx.get_component(ccd_cif, data_block=ccd_code, use_ideal_coord=True)
     comp = comp[~np.isin(comp.element, ["H", "D"])]
@@ -191,12 +284,15 @@ def get_ccd_features(ccd_code):
 def single_iteration(
         path_list: dict,
 ):
+    # still lack a little automation, to be improved on processing sequence information
     input_path, output_path = path_list
-    metadata = None
+    metadata = {}
     fail_list = []
     try:
-        protein_dict, metadata = process_single_pkl(input_path)
-        write_to_pkl(protein_dict, output_path)
+        protein_dict, metadata = process_single_cif(
+            input_path,
+        )
+        write_to_pkl(protein_dict, output_path, compress=True)
         metadata['processed_path'] = output_path
     except:
         fail_list.append(input_path)
@@ -204,8 +300,13 @@ def single_iteration(
 
 
 input_dir = './protenix_dataset/mmcif_bioassembly'
-output_dir = './protenix_dataset/pkl'
-path_list = [[os.path.join(input_dir, i), os.path.join(output_dir, i)] for i in os.listdir(input_dir)]
+output_dir = './protenix_dataset/pkl_w_ccd'
+fasta_dir = './protenix_dataset/'
+
+reference_metadata = pd.read_csv('./protenix_dataset/metadata_filtered.csv')
+reference_name = reference_metadata['accession_code']
+path_list = [[os.path.join(input_dir, f'{i}.pkl.gz'), os.path.join(output_dir, f'{i}.pkl.gz')]
+             for i in reference_name]
 if not os.path.exists(output_dir):
     os.makedirs(output_dir)
 
@@ -223,27 +324,30 @@ with mp.Pool(process_num) as pool:
     for (metadata, fail_list) in tqdm(pool.imap_unordered(single_iteration, path_list), total=len(path_list)):
         if len(fail_list) > 0:
             fails.extend(fail_list)
-        if metadata is not None:
+        if metadata != {}:
             for key, value in metadata.items():
                 all_metadata[key].append(value)
 # record metadata as csv
 df_metadata = pd.DataFrame(all_metadata)
-df_metadata.to_csv('./protenix_dataset/metadata.csv', index=False)
+df_metadata.to_csv('./protenix_dataset/metadata_w_ccd_.csv', index=False)
 
 # record failed files
 if len(fails) > 0:
-    with open('./protenix_dataset/fail_list.txt', 'w') as f:
+    with open('./protenix_dataset/fail_list_w_ccd.txt', 'w') as f:
         for fail in fails:
             f.write(fail + '\n')
     print(f"Failed files: {len(fails)}")
 
+# # record sequences as fasta
+# write_to_fasta(seq_dict, os.path.join(fasta_dir, 'protein_single_chains.fasta'))
+
 # test read pkl
-with open(df_metadata['processed_path'][0], 'rb') as f:
+with gzip.open(df_metadata['processed_path'][0], 'rb') as f:
     test = pickle.load(f)
     for k, v in test.items():
         print(k, v.shape)
-
     # save the dict as txt
     with open('./protenix_dataset/test.txt', 'w') as f:
         f.write(str(test))
+
 

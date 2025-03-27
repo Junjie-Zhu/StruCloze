@@ -179,3 +179,51 @@ class InferenceDataset(torch.utils.data.Dataset):
 
         data_object['accession_code'] = accession_code
         return data_object  # dict of arrays
+
+
+class BioInferenceDataset(torch.utils.data.Dataset):
+    def __init__(self,
+                 path_to_dataset: Union[Path, str],
+                 suffix: str = 'pkl',
+                 transform: Optional[BioFeatureTransform] = None,
+                 ):
+        super().__init__()
+        path_to_dataset = os.path.expanduser(path_to_dataset)
+
+        if os.path.isfile(path_to_dataset):
+            assert path_to_dataset.endswith('.csv'), f"Invalid file extension: {path_to_dataset} (have to be .csv)"
+            self._df = pd.read_csv(path_to_dataset)
+            self._df.sort_values('token_num', ascending=False)
+            self._data = self._df['processed_path'].tolist()
+        elif os.path.isdir(path_to_dataset):
+            self._data = glob(os.path.join(path_to_dataset, f'*.{suffix}'))
+            assert len(self._data) > 0, f"No files found in {path_to_dataset}"
+
+        self.data = np.asarray(self._data)
+        self.transform = transform
+
+    @property
+    def num_samples(self):
+        return len(self.data)
+
+    def len(self):
+        return self.__len__()
+
+    def __len__(self):
+        return self.num_samples
+
+    def get(self, idx):
+        return self.__getitem__(idx)
+
+    @lru_cache(maxsize=100)
+    def __getitem__(self, idx):
+        data_path = self.data[idx]
+        accession_code = os.path.basename(data_path).split('.')[0]
+
+        with gzip.open(data_path, 'rb') as f:
+            data_object = pickle.load(f)
+
+        if self.transform is not None:
+            data_object = self.transform(data_object)
+        data_object['accession_code'] = accession_code
+        return data_object

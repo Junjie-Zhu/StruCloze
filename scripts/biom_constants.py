@@ -440,6 +440,15 @@ ELEMENT_MAPPING = {
     'NA': 11, 'MG': 12, 'AL': 13, 'SI': 14, 'P': 15, 'S': 16,
 }
 
+WEIGHT_MAPPING = {
+    'H': 1.008, 'HE': 4.0026, 'LI': 6.94, 'BE': 9.0122, 'B': 10.81, 'C': 12.011, 'N': 14.007, 'O': 15.999, 'F': 18.998, 'NE': 20.180,
+    'NA': 22.990, 'MG': 24.305, 'AL': 26.982, 'SI': 28.085, 'P': 30.974, 'S': 32.06,
+}
+
+ATOM_WEIGHT_MAPPING = {
+    k: [WEIGHT_MAPPING[atom[0]] for atom in v.keys()] for k, v in RES_ATOMS_DICT.items()
+}
+
 van_der_waals_radius = {
     'C': 1.7,
     'N': 1.55,
