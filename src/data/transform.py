@@ -386,9 +386,13 @@ class BioFeatureTransform:
         if training:
             # add masks for loss
             atom_distances = (data_object['atom_positions'][:, None, :] - data_object['atom_positions'][None, :, :]).norm(dim=-1)
-            distance_threshold = (moltype[:, None] + moltype[None, :]) > 2.0  # molecule type specific threshold
-            data_object['lddt_mask'] = atom_distances < 10.0 * (1 + distance_threshold.float())
-            data_object['bond_mask'] = atom_distances < 3.6
+            # extended_moltype = torch.cat(
+            #     [moltype[int(i)] for i in data_object['atom_to_token_index']], dim=0
+            # )
+            # distance_threshold = (extended_moltype[:, None] + extended_moltype[None, :]) > 2.0  # molecule type specific threshold
+            data_object['lddt_mask'] = atom_distances < 15.0
+            # * (1 + distance_threshold.float()))
+            data_object['bond_mask'] = atom_distances < 3.0
         return data_object
 
 

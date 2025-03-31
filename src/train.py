@@ -265,14 +265,14 @@ def main(args: DictConfig):
             epoch_loss += step_loss
             mse += loss_verbose[0].item()
             lddt += loss_verbose[1].item()
-            bond += loss_verbose[2].item()
+            bond += loss_verbose[-1].item()
 
             # Update the progress bar dynamically
             if DIST_WRAPPER.rank == 0:
                 train_iter.set_postfix(step_loss=f"{step_loss:.3f}",
                                        mse=f"{loss_verbose[0]:.3f}",
                                        lddt=f"{loss_verbose[1]:.3f}",
-                                       bond=f"{loss_verbose[2]:.3f}")
+                                       bond=f"{loss_verbose[-1]:.3f}")
 
             # delete useless variables
             del loss, loss_verbose, pred_positions
