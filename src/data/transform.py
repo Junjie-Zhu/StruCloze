@@ -368,6 +368,10 @@ class BioFeatureTransform:
                            (moltype[:, None] * translation_scale))  # 2-fold deviation for nucleotides
             translation_expand = [translation[i] for i in data_object['atom_to_token_index']]
             translation = torch.stack(translation_expand, dim=0)
+
+            if random.random() < 0.5:  # a masked learning strategy
+                translation_mask = (torch.rand(translation.shape[0]) < 0.05).float()
+                translation = translation * translation_mask[..., None]
             ref_positions += translation
 
         rot_matrix = uniform_random_rotation(data_object['token_index'].shape[0])
@@ -382,8 +386,9 @@ class BioFeatureTransform:
         if training:
             # add masks for loss
             atom_distances = (data_object['atom_positions'][:, None, :] - data_object['atom_positions'][None, :, :]).norm(dim=-1)
-            data_object['lddt_mask'] = atom_distances < 15.0
-            data_object['bond_mask'] = atom_distances < 5.0
+            distance_threshold = (moltype[:, None] + moltype[None, :]) > 2.0  # molecule type specific threshold
+            data_object['lddt_mask'] = atom_distances < 10.0 * (1 + distance_threshold.float())
+            data_object['bond_mask'] = atom_distances < 3.6
         return data_object
 
 

@@ -404,13 +404,18 @@ class BondLoss(nn.Module):
         self.eps = eps
         self.reduction = reduction
 
-    def _chunk_forward(self, pred_distance, true_distance, bond_mask):
+    def _chunk_forward(self, pred_distance, true_distance, bond_mask,
+                       pair_mask=None, pair_weight=1.0):
         # Distance squared error
         # [...,  N_sample , N_atom, N_atom]
         dist_squared_err = (pred_distance - true_distance.unsqueeze(dim=-3)) ** 2
         bond_loss = torch.sum(dist_squared_err * bond_mask, dim=(-1, -2)) / torch.sum(
             bond_mask + self.eps, dim=(-1, -2)
-        )  # [..., N_sample]
+        ) * pair_weight  # [..., N_sample]
+        if pair_mask is not None:  # making a higher weight for bonded part and a standard weight for more distant part
+            bond_loss += torch.sum(dist_squared_err * pair_mask, dim=(-1, -2)) / torch.sum(
+                pair_mask + self.eps, dim=(-1, -2)
+            )
         return bond_loss
 
     def forward(
@@ -442,15 +447,18 @@ class BondLoss(nn.Module):
                 [...] if reduction is None else []
         """
 
-        bond_mask = (bond_mask * distance_mask).unsqueeze(
-            dim=-3
-        )  # [1, N_atom, N_atom] or [..., 1, N_atom, N_atom]
+        # bond_mask = (bond_mask * distance_mask).unsqueeze(
+        #     dim=-3
+        # )  # [1, N_atom, N_atom] or [..., 1, N_atom, N_atom]
+        bond_mask = bond_mask.unsqueeze(-3)
+        distance_mask = distance_mask.unsqueeze(-3)
         # Bond Loss
         if diffusion_chunk_size is None:
             bond_loss = self._chunk_forward(
                 pred_distance=pred_distance,
                 true_distance=true_distance,
                 bond_mask=bond_mask,
+                pair_mask=distance_mask
             )
         else:
             checkpoint_fn = get_checkpoint_fn()
