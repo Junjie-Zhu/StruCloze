@@ -50,6 +50,42 @@ def load_structure(file_path):
         return pdbx.get_structure(cif_file)[0]
 
 
+def process_structure(structure):
+    # Remove HETATM and H
+    structure = structure[structure.element != "H"]
+    structure = structure[structure.hetero == False]
+    return structure
+
+
+def align_atom_num(structure, ref_structure):
+    if len(struc.get_residues(structure)) != len(struc.get_residues(ref_structure)):
+        raise ValueError("Number of residues must be the same in both structures.")
+
+    structure_ = []
+    ref_structure_ = []
+
+    for residue_idx, (residue, ref_residue) in enumerate(zip(struc.residue_iter(structure), struc.residue_iter(ref_structure))):
+        ref_atom_set = set(ref_residue.atom_name)
+        atom_set = set(residue.atom_name)
+        common_set = ref_atom_set & atom_set
+
+        residue_mask = np.zeros(len(residue), dtype=bool)
+        ref_residue_mask = np.zeros(len(ref_residue), dtype=bool)
+
+        for atom_idx, atom in enumerate(residue.atom_name):
+            if atom in common_set:
+                residue_mask[atom_idx] = True
+
+        for ref_atom_idx, ref_atom in enumerate(ref_residue.atom_name):
+            if ref_atom in common_set:
+                ref_residue_mask[ref_atom_idx] = True
+
+        structure_.append(residue[residue_mask])
+        ref_structure_.append(ref_residue[ref_residue_mask])
+
+    return struc.concatenate(structure_), struc.concatenate(ref_structure_)
+
+
 def get_distance_matrix(
     structure,
     sparse = False
@@ -205,10 +241,12 @@ def process_fn(
     accession_code = os.path.basename(input_path).split(".")[0]
     accession_code = accession_code.replace("['", "").replace("']", "")
 
-    structure = load_structure(input_path)
-    reference_path = os.path.join(reference_dir, accession_code + ".pkl.gz")
-    with gzip.open(reference_path, "rb") as f:
-        ref_structure_data = pickle.load(f)
+    structure = process_structure(load_structure(input_path))
+    # reference_path = os.path.join(reference_dir, accession_code + ".pkl.gz")
+    # with gzip.open(reference_path, "rb") as f:
+    #     ref_structure_data = pickle.load(f)
+    ref_structure = process_structure(load_structure(os.path.join(reference_dir, accession_code + ".cif")))
+    structure, ref_structure = align_atom_num(structure, ref_structure)
 
     distance, atom_elements = get_distance_matrix(structure, sparse=sparse)
     clashes = get_steric_clashes(distance, atom_elements, sparse=sparse)
@@ -221,21 +259,22 @@ def process_fn(
         "chi_angles": chi_angles,
     }
 
-    struc_mask = (np.array(ref_structure_data["atom_positions"]) == 0.).astype(float)
-    struc_mask = (np.sum(struc_mask, axis=1) == 0.).astype(bool)
-    structure = structure[struc_mask]
-
-    # construct ref_structure with data in dictionary
-    ref_structure = struc.AtomArray(np.sum(struc_mask))
-    ref_structure.coord = ref_structure_data["atom_positions"][struc_mask]
-    ref_structure.atom_name = structure.atom_name
-    ref_structure.element = structure.element
-    ref_structure.res_name = structure.res_name
+    # struc_mask = (np.array(ref_structure_data["atom_positions"]) == 0.).astype(float)
+    # struc_mask = (np.sum(struc_mask, axis=1) == 0.).astype(bool)
+    # structure = structure[struc_mask]
+    #
+    # # construct ref_structure with data in dictionary
+    # ref_structure = struc.AtomArray(np.sum(struc_mask))
+    # ref_structure.coord = ref_structure_data["atom_positions"][struc_mask]
+    # ref_structure.atom_name = structure.atom_name
+    # ref_structure.element = structure.element
+    # ref_structure.res_name = structure.res_name
 
     try:
         rmsd = get_all_atom_rmsd(structure, ref_structure)
-    except:
-        rmsd = np.nan
+    except Exception as e:
+        print(f"Error in RMSD calculation for {accession_code}: {e}")
+        rmsd = None
 
     with gzip.open(os.path.join(output_dir, accession_code + ".dih.pkl.gz"), "wb") as f:
         pickle.dump(dihedrals, f)
@@ -250,9 +289,10 @@ def process_fn(
 
 if __name__ == '__main__':
     args = argparse.ArgumentParser()
-    args.add_argument('--input_dir', type=str, required=True)
-    args.add_argument('--reference_dir', type=str, required=True)
-    args.add_argument('--output_dir', type=str, required=True)
+    args.add_argument('-i', '--input_dir', type=str, required=True)
+    args.add_argument('-r', '--reference_dir', type=str, required=True)
+    args.add_argument('-o', '--output_dir', type=str, required=True)
+    args.add_argument('-p', '--indices', type=str, default=None)
     args = args.parse_args()
 
     process_fn_ = partial(
@@ -265,9 +305,17 @@ if __name__ == '__main__':
         os.makedirs(args.output_dir)
 
     cpu_num = os.cpu_count()
-    input_files = [os.path.join(args.input_dir, f)
-        for f in os.listdir(args.input_dir)
-        if f.endswith(".pdb")]
+    if args.indices is not None:
+        df = pd.read_csv(args.indices)
+        df = df[df['moltype'] == '[0]']
+        df = df[df['token_num'] < 2048]
+        input_files = [os.path.join(args.input_dir, f)
+            for f in os.listdir(args.input_dir)
+            if f.endswith(".pdb") and f.split(".")[0] in df['accession_code'].tolist()]
+    else:
+        input_files = [os.path.join(args.input_dir, f)
+            for f in os.listdir(args.input_dir)
+            if f.endswith(".pdb")]
 
     if cpu_num > 1:
         with mp.Pool(cpu_num) as p:
