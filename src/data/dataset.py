@@ -88,6 +88,11 @@ class BioTrainingDataset(torch.utils.data.Dataset):
         self._df.sort_values('token_num', ascending=False)
         self._data = self._df['processed_path'].tolist()
 
+        _rna = self._df['type'] == '[1]'
+        _dna = self._df['type'] == '[2]'
+        _non_protein_data = self._df['processed_path'][_rna | _dna]
+        self._data.extend(_non_protein_data.tolist())  # add one more iteration for nucleic acids
+
         self.data = np.asarray(self._data)
         self.transform = transform
         self.training = training  # not implemented yet
