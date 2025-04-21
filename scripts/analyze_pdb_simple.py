@@ -58,32 +58,20 @@ def process_structure(structure):
 
 
 def align_atom_num(structure, ref_structure):
-    if len(struc.get_residues(structure)) != len(struc.get_residues(ref_structure)):
+    if len(struc.get_residues(structure)[0]) != len(struc.get_residues(ref_structure)[0]):
         raise ValueError("Number of residues must be the same in both structures.")
 
-    structure_ = []
-    ref_structure_ = []
+    _structure = []
+    _ref_structure = []
 
     for residue_idx, (residue, ref_residue) in enumerate(zip(struc.residue_iter(structure), struc.residue_iter(ref_structure))):
-        ref_atom_set = set(ref_residue.atom_name)
-        atom_set = set(residue.atom_name)
-        common_set = ref_atom_set & atom_set
+        common_atom_set = set(residue.atom_name) & set(ref_residue.atom_name)
 
-        residue_mask = np.zeros(len(residue), dtype=bool)
-        ref_residue_mask = np.zeros(len(ref_residue), dtype=bool)
+        for atom_name in common_atom_set:
+            _structure.append(residue[residue.atom_name == atom_name])
+            _ref_structure.append(ref_residue[ref_residue.atom_name == atom_name])
 
-        for atom_idx, atom in enumerate(residue.atom_name):
-            if atom in common_set:
-                residue_mask[atom_idx] = True
-
-        for ref_atom_idx, ref_atom in enumerate(ref_residue.atom_name):
-            if ref_atom in common_set:
-                ref_residue_mask[ref_atom_idx] = True
-
-        structure_.append(residue[residue_mask])
-        ref_structure_.append(ref_residue[ref_residue_mask])
-
-    return struc.concatenate(structure_), struc.concatenate(ref_structure_)
+    return struc.concatenate(_structure), struc.concatenate(_ref_structure)
 
 
 def get_distance_matrix(
