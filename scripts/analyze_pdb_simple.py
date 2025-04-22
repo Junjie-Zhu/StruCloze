@@ -154,24 +154,25 @@ def get_chi_angles(structure):
 def get_pseudo_rotation(structure):
     pseudo_rotations = []
     puckers = []
+    moltype = []
     for residues in struc.residue_iter(structure):
         if residues[0].res_name not in NA_keys:
             continue
 
+        mol = 0 if residues[0].res_name in ['A', 'G', 'C', 'U'] else 1
+
         angles = []
         for atom_groups in bc.na_pseudo_rotation:
-            try:
-                atom_coords = [residues[residues.atom_name == atom_groups[i]].coord for i in range(4)]
-                angles.append(np.degrees(struc.dihedral(*atom_coords)))
-            except:
-                angles.append(None)
+            atom_coords = [residues[residues.atom_name == atom_groups[i]].coord for i in range(4)]
+            angles_ = np.degrees(struc.dihedral(*atom_coords))
+            angles.append(angles_ if angles_.shape[0] == 1 else None)
 
         if None in angles:
             continue
 
-        pseudo_angle = np.degrees(
+        pseudo_angle = float(np.degrees(
             np.arctan2((angles[4] - angles[1]) - (angles[3] - angles[0]), 2 * angles[2])
-        ) % 360
+        ) % 360)
 
         if 0 <= pseudo_angle <= 60 or 300 <= pseudo_angle <= 360:
             pucker_type = 3
@@ -182,7 +183,8 @@ def get_pseudo_rotation(structure):
 
         pseudo_rotations.append(pseudo_angle)
         puckers.append(pucker_type)
-    return pseudo_rotations, puckers
+        moltype.append(mol)
+    return pseudo_rotations, puckers, moltype
 
 
 def get_hbond(
@@ -206,6 +208,7 @@ def get_hbond(
     atomtype = ref_structure.atom_name
 
     single_mask = np.zeros(atomtype.shape[0])
+    moltype = []
     res_index = 0
     unique_res = ""
     for idx, (res, atom) in enumerate(zip(restype, atomtype)):
@@ -225,17 +228,20 @@ def get_hbond(
     hbond = (distance < threshold) & pair_mask
     ref_hbond = (ref_distance < threshold) & pair_mask
 
-    return np.sum(ref_hbond & hbond), np.sum(ref_hbond & ~hbond), np.sum(~ref_hbond & hbond)  # TP, TN, FP
+    return np.sum(ref_hbond & hbond), np.sum(ref_hbond & ~hbond), np.sum(~ref_hbond & hbond), np.sum(~ref_hbond & ~hbond)  # TP, FN, FP, TN
 
 
 def process_fn(
     input_path,
     reference_dir,
     output_dir,
-    sparse=False
+    sparse=False,
 ):
+    moltype = ''
+    if len(input_path) == 2:
+        input_path, moltype = input_path
+
     accession_code = os.path.basename(input_path).split(".")[0]
-    accession_code = accession_code.replace("['", "").replace("']", "")
 
     structure = process_structure(load_structure(input_path))
     reference_path = os.path.join(reference_dir, accession_code + ".pkl.gz")
@@ -252,35 +258,49 @@ def process_fn(
     ref_structure.atom_name = structure.atom_name
     ref_structure.element = structure.element
     ref_structure.res_name = structure.res_name
-    ref_structure.res_index = structure.res_index
+    ref_structure.res_id = structure.res_id
 
     distance, atom_elements = get_distance_matrix(structure, sparse=sparse)
     ref_distance, _ = get_distance_matrix(ref_structure, sparse=sparse)
     clashes, bond_mask = get_steric_clashes(distance, atom_elements, sparse=sparse, reference_matrix=ref_distance)
     bond = np.stack([distance[bond_mask], ref_distance[bond_mask]], axis=1)
 
-    phi, psi = get_backbone_dihedrals(structure)
-    ref_phi, ref_psi = get_backbone_dihedrals(ref_structure)
-    chi_angles = get_chi_angles(structure)
-    ref_chi_angles = get_chi_angles(ref_structure)
+    if '0' in moltype:
+        phi, psi = get_backbone_dihedrals(structure)
+        ref_phi, ref_psi = get_backbone_dihedrals(ref_structure)
+        chi_angles = get_chi_angles(structure)
+        ref_chi_angles = get_chi_angles(ref_structure)
 
-    dihedrals = {  # its * 2 (pred and ground truth)
-        "bond": bond,
-        "phi": np.stack([phi, ref_phi], axis=1),
-        "psi": np.stack([psi, ref_psi], axis=1),
-        "chi": np.stack([chi_angles, ref_chi_angles], axis=1),
-    }
+        dihedrals = {  # its * 2 (pred and ground truth)
+            "bond": bond,
+            "phi": np.stack([phi, ref_phi], axis=1),
+            "psi": np.stack([psi, ref_psi], axis=1),
+            "chi": np.stack([chi_angles, ref_chi_angles], axis=1),
+        }
+        with gzip.open(os.path.join(output_dir, accession_code + ".dih.pkl.gz"), "wb") as f:
+            pickle.dump(dihedrals, f)
+        del dihedrals, phi, psi, chi_angles
+    if ('1' in moltype) or ('2' in moltype):
+        pseudo_rotations, puckers, na_moltype = get_pseudo_rotation(structure)
+        ref_pseudo_rotations, ref_puckers, _ = get_pseudo_rotation(ref_structure)
+        hbonds = get_hbond(distance, ref_distance, ref_structure, sparse=sparse)
 
-    # rmsd = get_all_atom_rmsd(structure, ref_structure)
+        dihedrals = {
+            "bond": bond,
+            "pseudo_rotation": np.stack([pseudo_rotations, ref_pseudo_rotations], axis=1),
+            "pucker": np.stack([puckers, ref_puckers], axis=1),
+            "na_moltype": np.array(na_moltype),
+            "hbond": hbonds
+        }
+        with gzip.open(os.path.join(output_dir, accession_code + ".dih.pkl.gz"), "wb") as f:
+            pickle.dump(dihedrals, f)
+        del dihedrals, pseudo_rotations, puckers, hbonds
 
-    with gzip.open(os.path.join(output_dir, accession_code + ".dih.pkl.gz"), "wb") as f:
-        pickle.dump(dihedrals, f)
-    del dihedrals, phi, psi, chi_angles
-
+    rmsd = get_all_atom_rmsd(structure, ref_structure)
     return {
         "accession_code": accession_code,
         "clashes": clashes,
-        # "rmsd": rmsd,
+        "rmsd": rmsd,
     }
 
 
@@ -296,7 +316,7 @@ if __name__ == '__main__':
         process_fn,
         reference_dir=args.reference_dir,
         output_dir=args.output_dir,
-        sparse=True
+        sparse=True,
     )
 
     if not os.path.exists(args.output_dir):
@@ -306,11 +326,11 @@ if __name__ == '__main__':
     print(f'Using {cpu_num} cpus')
     if args.indices is not None:
         df = pd.read_csv(args.indices)
-        df = df[df['moltype'] == '[0]']
         df = df[df['token_num'] < 2048]
-        input_files = [os.path.join(args.input_dir, f)
-            for f in os.listdir(args.input_dir)
-            if f.endswith(".pdb") and f.split(".")[0] in df['accession_code'].tolist()]
+        input_files = [(os.path.join(args.input_dir, f'{f}.pdb'), moltype)
+                       for f, moltype in zip(df['accession_code'].tolist(), df['moltype'].tolist())
+                       if os.path.exists(os.path.join(args.input_dir, f'{f}.pdb'))]
+        input_files = [i for i in input_files if i[1] != '[0]']
     else:
         input_files = [os.path.join(args.input_dir, f)
             for f in os.listdir(args.input_dir)
@@ -327,14 +347,14 @@ if __name__ == '__main__':
     metadata = {
         "accession_code": [],
         "clashes": [],
-        # "rmsd": [],
+        "rmsd": [],
     }
     for r in results:
         metadata["accession_code"].append(r["accession_code"])
         metadata["clashes"].append(r["clashes"])
-        # metadata["rmsd"].append(r["rmsd"])
+        metadata["rmsd"].append(r["rmsd"])
     metadata = pd.DataFrame(metadata)
     metadata.to_csv(os.path.join(args.output_dir, "metadata.csv"), index=False)
 
-    # print(f'Clash: {metadata["clashes"].mean()}, RMSD: {metadata["rmsd"].mean()}')
+    print(f'Clash: {metadata["clashes"].mean()}, RMSD: {metadata["rmsd"].mean()}')
 
