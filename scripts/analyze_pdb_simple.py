@@ -18,6 +18,7 @@ from tqdm import tqdm
 import biom_constants as bc
 
 warnings.filterwarnings("ignore", category=UserWarning)
+warnings.filterwarnings("ignore", category=DeprecationWarning)
 
 NA_keys = ["A", "G", "C", "U", "N", "DA", "DG", "DC", "DT", "DN"]
 
@@ -133,9 +134,9 @@ def get_backbone_dihedrals(structure):
     return phi[1:-1], psi[1:-1]
 
 
-def get_chi_angles(structure):
-    chi_angles = []
-    for residues in struc.residue_iter(structure):
+def get_chi_angles(structure, ref_structure):
+    chi, ref_chi = [], []
+    for residues, ref_residues in zip(struc.residue_iter(structure), struc.residue_iter(ref_structure)):
         if residues[0].res_name not in bc.chi_angles_atoms.keys():
             continue
 
@@ -146,8 +147,37 @@ def get_chi_angles(structure):
                 angles.append(struc.dihedral(*atom_coords))
             except:
                 angles.append(None)
+        chi.append(angles)
 
-        chi_angles.append(angles)
+        ref_angles = []
+        for atom_groups in bc.chi_angles_atoms[ref_residues[0].res_name]:
+            atom_coords = [ref_residues[ref_residues.atom_name == atom_groups[i]].coord for i in range(4)]
+            ref_angles.append(struc.dihedral(*atom_coords))
+        ref_chi.append(ref_angles)
+
+    chi_angles = {
+        'chi1': [],
+        'chi2': [],
+        'chi3': [],
+        'chi4': [],
+        'chi_34': [],
+        'chi_34_ref': [],
+    }
+    for gt, pred in zip(chi, ref_chi):
+        if not isinstance(gt, list) or not isinstance(pred, list):
+            continue
+        max_len = min(len(pred), len(gt))
+        for i in range(max_len):
+            gt_i = gt[i]
+            pred_i = pred[i]
+            if len(gt_i) > 0 and len(pred_i) > 0:
+                chi_angles[f'chi{i + 1}'].append([pred_i, gt_i])
+        if max_len == 4:
+            if len(pred[2]) > 0 and len(pred[3]) > 0:
+                chi_angles['chi_34'].append([pred[2], pred[3]])
+            if len(gt[2]) > 0 and len(gt[3]) > 0:
+                chi_angles['chi_34_ref'].append([gt[2], gt[3]])
+    chi_angles = {k: np.array(v).squeeze() for k, v in chi_angles.items()}
     return chi_angles
 
 
@@ -268,15 +298,14 @@ def process_fn(
     if '0' in moltype:
         phi, psi = get_backbone_dihedrals(structure)
         ref_phi, ref_psi = get_backbone_dihedrals(ref_structure)
-        chi_angles = get_chi_angles(structure)
-        ref_chi_angles = get_chi_angles(ref_structure)
+        chi_angles = get_chi_angles(structure, ref_structure)
 
         dihedrals = {  # its * 2 (pred and ground truth)
             "bond": bond,
             "phi": np.stack([phi, ref_phi], axis=1),
             "psi": np.stack([psi, ref_psi], axis=1),
-            "chi": np.stack([chi_angles, ref_chi_angles], axis=1),
         }
+        dihedrals.update(chi_angles)
         with gzip.open(os.path.join(output_dir, accession_code + ".dih.pkl.gz"), "wb") as f:
             pickle.dump(dihedrals, f)
         del dihedrals, phi, psi, chi_angles
@@ -330,7 +359,6 @@ if __name__ == '__main__':
         input_files = [(os.path.join(args.input_dir, f'{f}.pdb'), moltype)
                        for f, moltype in zip(df['accession_code'].tolist(), df['moltype'].tolist())
                        if os.path.exists(os.path.join(args.input_dir, f'{f}.pdb'))]
-        input_files = [i for i in input_files if i[1] != '[0]']
     else:
         input_files = [os.path.join(args.input_dir, f)
             for f in os.listdir(args.input_dir)
