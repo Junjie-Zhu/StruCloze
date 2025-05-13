@@ -1,5 +1,6 @@
 import os
 import string
+from collections import defaultdict
 from typing import Any
 
 import numpy as np
@@ -24,41 +25,46 @@ def to_pdb(
     output_dir: str,
 ):
     """save atom_positions as pdb with biotite"""
-    restype = [rc.IDX_TO_RESIDUE[res.item()] for res in input_feature_dict["aatype"].squeeze()]
+    aatype = input_feature_dict["aatype"].squeeze()
     atom_to_token_index = input_feature_dict["atom_to_token_index"].squeeze().cpu()
-
+    chain_indices = input_feature_dict["chain_index"].squeeze().cpu()
+    ref_atom_names = input_feature_dict["ref_atom_name_chars"].squeeze()
     atom_positions = atom_positions.squeeze().cpu()
-    chain_index = [INT_TO_CHAIN[input_feature_dict["chain_index"].squeeze()[i.item()].item()] for i in atom_to_token_index]
-    restype_ = [restype[i.item()] for i in atom_to_token_index]
-    element_ = convert_atom_name_id(input_feature_dict["ref_atom_name_chars"].squeeze())
+    accession_code = input_feature_dict["accession_code"]
 
-    with open(os.path.join(output_dir, f"{input_feature_dict['accession_code']}.pdb"), 'w') as f:
+    restype = [rc.IDX_TO_RESIDUE[res.item()] for res in aatype]
+    atom_names = convert_atom_name_id(ref_atom_names)
+
+    residue_indices = atom_to_token_index.tolist()
+    chain_id_per_atom = [INT_TO_CHAIN[chain_indices[res_idx].item()]
+                         for res_idx in residue_indices]
+    resname_per_atom = [restype[res_idx] for res_idx in residue_indices]
+
+    chain_to_res_ids = defaultdict(set)
+    for res_idx, chain_id in zip(residue_indices, chain_id_per_atom):
+        chain_to_res_ids[chain_id].add(res_idx)
+
+    chain_to_res_map = {
+        chain_id: {global_res: local_res+1  # start from 1
+                   for local_res, global_res in enumerate(sorted(list(res_ids)))}
+        for chain_id, res_ids in chain_to_res_ids.items()
+    }
+
+    with open(os.path.join(output_dir, f"{accession_code}.pdb"), 'w') as f:
         for i in range(atom_positions.shape[0]):
+            atom_name = atom_names[i]
+            resname = resname_per_atom[i]
+            chain_id = chain_id_per_atom[i]
+            global_res_idx = residue_indices[i]
+            local_res_idx = chain_to_res_map[chain_id][global_res_idx]
+
+            x, y, z = atom_positions[i]
+
             f.write(
-                f'ATOM  {i + 1:>5} {element_[i]:<4} {restype_[i]:>3} {chain_index[i]}{atom_to_token_index[i] + 1:>4}    '
-                f'{atom_positions[i][0]:>8.3f}{atom_positions[i][1]:>8.3f}{atom_positions[i][2]:>8.3f}'
-                f'  1.00  0.00           {element_[i][0]:>2}\n'
+                f"ATOM  {i + 1:>5} {atom_name:<4} {resname:>3} {chain_id}{local_res_idx:>4}    "
+                f"{x:8.3f}{y:8.3f}{z:8.3f}  1.00  0.00           {atom_name[0]:>2}\n"
             )
-        f.write('END\n')
-
-    # structure = struc.AtomArray(len(atom_positions))
-    # structure.coord = np.array(atom_positions.cpu())
-    # structure.chain_id = chain_index
-    # structure.res_name = restype_
-    # structure.res_id = np.array(atom_to_token_index.cpu())
-    # structure.atom_name = element_
-    # structure.element = element_
-    #
-    # pdb_file = pdb.PDBFile()
-    # pdb_file.set_structure(structure)
-
-    # if os.path.isdir(output_dir):
-    #     output_dir = os.path.join(output_dir, f"{input_feature_dict['accession_code']}.pdb")
-    #     pdb_file.write(output_dir)
-    # elif output_dir.endswith(".pdb"):
-    #     pdb_file.write(output_dir)
-    # else:
-    #     raise ValueError("output_dir must be a directory or a .pdb file path")
+        f.write("END\n")
 
 
 def convert_atom_name_id(onehot_tensor: torch.Tensor):

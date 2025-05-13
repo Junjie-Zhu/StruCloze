@@ -15,6 +15,7 @@ import pandas as pd
 from tqdm import tqdm
 
 import biom_constants as bc
+import process_multi_particles as pm
 
 # Global map from chain characters to integers. e.g, A -> 0, B -> 1, etc.
 ALPHANUMERIC = string.ascii_letters + string.digits + ' '
@@ -145,7 +146,7 @@ def get_cg_repr(
                 continue
             pos[bc.RES_ATOMS_DICT[residues[0].res_name][atom.atom_name]] = atom.coord
 
-            if atom.atom_name in ['CA', 'P']:  # for CA models we consider P in nucleotides as CG repr.
+            if atom.atom_name in ["CA", "C4'"]:  # for CA models we consider P in nucleotides as CG repr.
                 ca = atom.coord
 
         ref_pos = np.zeros((len(bc.RES_ATOMS_DICT[residues[0].res_name]), 3))

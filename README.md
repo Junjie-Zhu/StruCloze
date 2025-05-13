@@ -15,6 +15,7 @@ This repository contains code for "**Completing Any Missing Structural Elements 
   * Back-mapping coarse-grained structures
   * Completing missing tokens
 * Analyzing predicted structures
+* Some existing bugs
 * Contact
 * Acknowledgement
 
@@ -40,4 +41,28 @@ pip install -e .
 ### Dataset downloading
 
 We have uploaded our training and test dataset to Zenodo. Training set contains `52,926` processed entries from PDB (in format `.pkl.gz`)
+
+
+### Usage
+
+#### Back-mapping coarse-grained structures
+
+#### Completing missing tokens
+
+### Analyzing predicted structures
+
+### Some existing bugs
+
+Currently there are some known bugs in code listed here:
+
+*  The `OXT` atom at the C-terminus is neglected in the prediction for convenience (As all other residues do not contain this atom, we remove it from CCD dictionary).
+*  Chain IDs in predicted structures starts from `a` but not `A`.
+
+Any suggestions or bug reports are welcome. Please open an issue in the GitHub repository.
+
+### Contact
+If you have any questions, please contact me via email: shiroyuki@sjtu.edu.cn
+Or open an issue in the GitHub repository.
+
+### Acknowledgement
 
