@@ -1,29 +1,30 @@
 # configurations for training
 
-batch_size: 3  # batch size on single device
+batch_size: 4 # batch size on single device
 n_samples: 1
 epochs: 200
 self_conditioning: False
 predict_diff: False
 checkpoint_interval: 10  # save checkpoint every n epochs
-seed: 37
+seed: 42
 deterministic: False
-logging_dir: "/root/autodl-tmp/Fold-Embedder/logs"  # better absolute path, to revise
+logging_dir: "./logs"  # better absolute path, to revise
 
 resume:
   ckpt_dir: null
-  load_model_only: False
+  load_model_only: True
 
 data:
-  path_to_dataset: "/root/autodl-tmp/pretrain_dataset/metadata.copy.csv"  # better absolute path, to revise
-  path_to_ccd_info: "/root/autodl-tmp/Fold-Embedder/src/data/ccd_atom37.pkl"  # better absolute path, to revise
-  truncate_size: 384
+  path_to_dataset: "./data/metadata.test.csv"  # better absolute path, to revise
+  path_to_ccd_info: "./src/data/ccd_atom37.pkl"  # better absolute path, to revise
+  truncate_size: 256
   recenter_atoms: True
   eps: 1e-8
   prop_train: 0.95
   shuffle: False
   num_workers: 16
   pin_memory: False
+  repr: "CA"
 
 model:
   c_atom: 128
@@ -54,15 +55,15 @@ optimizer:
   beta2: 0.999
   use_adamw: False
   lr_scheduler: "af3"
-  warmup_steps: 2000
-  decay_every_n_steps: 40000
+  warmup_steps: 4000
+  decay_every_n_steps: 80000
   decay_factor: 0.95
 
 loss:
   weight_mse: 0.33
   eps: 1e-8
   reduction: "mean"
-  lddt_enabled: True
+  lddt_enabled: False
   bond_enabled: True
   clip_grad_value: 0
 

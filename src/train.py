@@ -83,6 +83,7 @@ def main(args: DictConfig):
             truncate_size=args.data.truncate_size,
             recenter_atoms=args.data.recenter_atoms,
             eps=args.data.eps,
+            repr=args.data.repr
         ),
     )
     train_loader, val_loader = get_training_dataloader(
@@ -396,3 +397,4 @@ def to_device(obj, device):
 
 if __name__ == '__main__':
     main()
+

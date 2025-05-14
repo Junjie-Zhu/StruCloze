@@ -115,7 +115,13 @@ def get_cg_repr(
     # cg representation
     atom_ca = []
     atom_com = []
+    ref_ca = []
     ref_com = []
+
+    # transformed ref_positions
+    calv_positions = []
+    isrna1_positions = []
+    isrna2_positions = []
 
     token_id = 0
     chain_id = 0
@@ -144,6 +150,8 @@ def get_cg_repr(
         for atom in residues:
             if atom.atom_name not in bc.RES_ATOMS_DICT[residues[0].res_name]:
                 continue
+            if atom.atom_name in ['OXT', 'OP3']:
+                continue
             pos[bc.RES_ATOMS_DICT[residues[0].res_name][atom.atom_name]] = atom.coord
 
             if atom.atom_name in ["CA", "C4'"]:  # for CA models we consider P in nucleotides as CG repr.
@@ -157,13 +165,48 @@ def get_cg_repr(
         for atom in comp:
             if atom.atom_name not in bc.RES_ATOMS_DICT[residues[0].res_name]:
                 continue
+            if atom.atom_name in ['OXT', 'OP3']:
+                continue
             ref_pos[bc.RES_ATOMS_DICT[residues[0].res_name][atom.atom_name]] = atom.coord
             ref_mask[bc.RES_ATOMS_DICT[residues[0].res_name][atom.atom_name]] = 1.
             element[bc.RES_ATOMS_DICT[residues[0].res_name][atom.atom_name]] = onehot_dict[bc.ELEMENT_MAPPING[atom.element]]
             weight[bc.RES_ATOMS_DICT[residues[0].res_name][atom.atom_name]] = bc.WEIGHT_MAPPING[atom.element]
             atom_name_chars[bc.RES_ATOMS_DICT[residues[0].res_name][atom.atom_name]] = convert_atom_id_name(atom.atom_name)
 
+            if atom.atom_name in ["CA", "C4'"]:  # for CA models we consider P in nucleotides as CG repr.
+                ref_ca_ = atom.coord
+
         ref_mask = ref_mask.astype(bool)
+
+        if mol_type == 1 or mol_type == 2:
+            try:
+                calv_rna_cg = pm.residue_to_calv_rna(residues)
+            except:
+                continue
+
+            ref_calv_rna_cg = pm.residue_to_calv_rna(comp)
+            ref_calv_rna_pos, _, _ = pm.align_single_residue(ref_pos[ref_mask], ref_calv_rna_cg, calv_rna_cg)
+            # isrna1_cg = pm.residue_to_isrna1(residues)
+            # ref_isrna1_cg = pm.residue_to_isrna1(comp)
+            # ref_isrna1_pos, _, _  = pm.align_single_residue(ref_pos[ref_mask], ref_isrna1_cg, isrna1_cg)
+            # isrna2_cg = pm.residue_to_isrna2(residues)
+            # ref_isrna2_cg = pm.residue_to_isrna2(comp)
+            # ref_isrna2_pos, _, _  = pm.align_single_residue(ref_pos[ref_mask], ref_isrna2_cg, isrna2_cg)
+
+            calv_positions.append(ref_calv_rna_pos)
+            # isrna1_positions.append(ref_isrna1_pos)
+            # isrna2_positions.append(ref_isrna2_pos)
+        elif mol_type == 0:
+            martini_cg = pm.residue_to_martini(residues)
+            ref_martini_cg = pm.residue_to_martini(comp)
+            ref_martini_pos = pm.align_single_residue(ref_pos[ref_mask], ref_martini_cg, martini_cg)
+
+            calv_positions.append(ref_martini_pos)
+            isrna1_positions.append(ref_martini_pos)
+            isrna2_positions.append(ref_martini_pos)
+        else:
+            raise ValueError(f"Unknown moltype: {mol_type}")
+
         atom_positions.append(pos[ref_mask])
         atom_to_token_index.append(a2t_id[ref_mask])
 
@@ -181,6 +224,7 @@ def get_cg_repr(
         atom_com.append(
             np.tile(calc_center_of_mass(pos, weight, ref_mask)[np.newaxis, :], (np.sum(ref_mask), 1))
         )
+        ref_ca.append(np.array([ref_ca_] * np.sum(ref_mask)))
         ref_com.append(
             np.tile(calc_center_of_mass(ref_pos, weight, ref_mask)[np.newaxis, :], (np.sum(ref_mask), 1))
         )
@@ -207,7 +251,12 @@ def get_cg_repr(
 
         "atom_ca": np.concatenate(atom_ca),
         "atom_com": np.concatenate(atom_com),
+        "ref_ca": np.concatenate(ref_ca),
         "ref_com": np.concatenate(ref_com),
+
+        "calv_positions": np.concatenate(calv_positions),
+        # "isrna1_positions": np.concatenate(isrna1_positions),
+        # "isrna2_positions": np.concatenate(isrna2_positions),
     }
 
 
@@ -237,15 +286,23 @@ def process_fn(
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
-    parser.add_argument("--input_dir", type=str, help="Input file path")
-    parser.add_argument("--output_dir", type=str, help="Output file path")
+    parser.add_argument("--input_dir", "-i", type=str, help="Input file path")
+    parser.add_argument("--output_dir", "-o", type=str, help="Output file path")
+    parser.add_argument("--reference", "-r", type=str, required=False, help="Reference metadata")
     args = parser.parse_args()
 
     if not os.path.exists(args.output_dir):
         os.makedirs(args.output_dir)
 
-    # get all cif files in input_dir
-    target_files = [os.path.join(args.input_dir, i) for i in os.listdir(args.input_dir) if i.endswith(".cif")]
+    if args.reference is not None:
+        reference = pd.read_csv(args.reference)
+        rnas = reference[reference['moltype'] == '[1]']
+        dnas = reference[reference['moltype'] == '[2]']
+        reference = pd.concat([rnas, dnas])
+        target_files = [os.path.join(args.input_dir, f'{i}.cif') for i in reference['accession_code'].tolist()]
+    else:
+        # get all cif files in input_dir
+        target_files = [os.path.join(args.input_dir, i) for i in os.listdir(args.input_dir) if i.endswith(".cif")]
     process_fn_ = partial(
         process_fn,
         output_dir=args.output_dir,

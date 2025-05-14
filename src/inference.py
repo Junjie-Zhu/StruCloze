@@ -81,6 +81,7 @@ def main(args: DictConfig):
             recenter_atoms=args.data.recenter_atoms,
             eps=args.data.eps,
             training=False,
+            repr=args.data.repr
         ),
     )
     inference_loader = get_inference_dataloader(
@@ -129,7 +130,7 @@ def main(args: DictConfig):
     with torch.no_grad():
         for inference_iter, inference_batch in tqdm(enumerate(inference_loader)):
             inference_batch = to_device(inference_batch, device)
-            # init_positions = structure_augment(inference_batch, n_samples=1)
+            #init_positions = structure_augment(inference_batch, n_samples=1)
             init_positions = inference_batch["ref_structure"].unsqueeze(1)
 
             pred_positions = model(
@@ -182,4 +183,5 @@ def to_device(obj, device):
 
 if __name__ == '__main__':
     main()
+
 

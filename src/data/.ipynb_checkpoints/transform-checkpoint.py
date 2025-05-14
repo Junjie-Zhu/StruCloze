@@ -281,8 +281,7 @@ class BioFeatureTransform:
                  truncate_size: Optional[int] = None,
                  recenter_atoms: bool = True,
                  eps: float = 1e-8,
-                 training: bool = True,
-                 repr: str = 'COM'
+                 training: bool = True
                  ):
 
         if truncate_size is not None:
@@ -292,10 +291,9 @@ class BioFeatureTransform:
         self.recenter_and_scale = recenter_atoms
         self.eps = eps
         self.training = training
-        self.repr = repr
 
     def __call__(self, data_object):
-        atom_object, token_object = self.patch_features(data_object, repr=self.repr)
+        atom_object, token_object = self.patch_features(data_object)
 
         if self.truncate_length is not None:
             atom_object, token_object = self.truncate(atom_object, token_object, truncate_size=self.truncate_length)
@@ -309,11 +307,11 @@ class BioFeatureTransform:
         data_object = {**atom_object, **token_object}
 
         data_object = self.map_to_tensors(data_object)
-        data_object = self.update_ref_features(data_object, training=self.training, repr=self.repr)
+        data_object = self.update_ref_features(data_object, training=self.training)
         return data_object
 
     @staticmethod
-    def patch_features(data_object, repr="COM"):
+    def patch_features(data_object):
         atom_object = {
             'atom_positions': data_object['atom_positions'],
             'atom_to_token_index': data_object['atom_to_token_index'],
@@ -331,12 +329,6 @@ class BioFeatureTransform:
             'chain_index': data_object['chain_index'],
             'token_index': data_object['token_index'],
         }
-
-        if repr == "CA":
-            atom_object['atom_com'] = data_object['atom_ca']
-            atom_object['ref_com'] = data_object['ref_ca']
-        elif repr == "calv_rna":
-            atom_object['ref_com'] = data_object['calv_positions']
         return atom_object, token_object
 
     @staticmethod
@@ -365,7 +357,7 @@ class BioFeatureTransform:
             return spatial_truncate(atom_object, token_object, truncate_size)
 
     @staticmethod
-    def update_ref_features(data_object, translation_scale=1., training=True, repr="COM"):
+    def update_ref_features(data_object, translation_scale=1.5, training=True):
         data_object['ref_space_uid'] = data_object['atom_to_token_index']
         ref_positions = data_object['ref_positions']
 
@@ -373,27 +365,24 @@ class BioFeatureTransform:
         if training:
             # Add random rotation and translation
             moltype = (data_object['moltype'] > 0).float() + 1.
-            translation = (torch.randn((data_object['token_index'].shape[0], 3)) * translation_scale)
-                          # (moltype[:, None] * translation_scale))  # 2-fold deviation for nucleotides
+            translation = (torch.randn((data_object['token_index'].shape[0], 3)) *
+                           (moltype[:, None] * translation_scale))  # 2-fold deviation for nucleotides
             translation_expand = [translation[i] for i in data_object['atom_to_token_index']]
             translation = torch.stack(translation_expand, dim=0)
             ref_positions += translation
 
-            if random.random() < 0.5:  # a masked learning strategy
-                translation_mask = (torch.rand(translation.shape[0]) < 0.95).float()
+            #if random.random() < 0.5:  # a masked learning strategy
+            #    translation_mask = (torch.rand(translation.shape[0]) < 0.95).float()
 
-        if repr == 'COM' or repr == 'CA':
-            #translation_mask = (torch.rand(ref_positions.shape[0]) < 0.95).float()
-            rot_matrix = uniform_random_rotation(data_object['token_index'].shape[0])
-            rot_matrix_expand = [rot_matrix[i] for i in data_object['atom_to_token_index']]
-            rot_matrix = torch.stack(rot_matrix_expand, dim=0)
-            ref_positions = rot_vec_mul(
-                r=rot_matrix,
-                t=ref_positions - data_object['ref_com'],
-            )
-            data_object['ref_structure'] = ref_positions + data_object['atom_com'] * translation_mask[..., None]
-        else:
-            data_object['ref_structure'] = data_object['ref_com']
+        #translation_mask = (torch.rand(ref_positions.shape[0]) < 0.95).float()
+        rot_matrix = uniform_random_rotation(data_object['token_index'].shape[0])
+        rot_matrix_expand = [rot_matrix[i] for i in data_object['atom_to_token_index']]
+        rot_matrix = torch.stack(rot_matrix_expand, dim=0)
+        ref_positions = rot_vec_mul(
+            r=rot_matrix,
+            t=ref_positions - data_object['ref_com'],
+        )
+        data_object['ref_structure'] = ref_positions + data_object['atom_com'] * translation_mask[..., None]
 
         if training:
             # add masks for loss

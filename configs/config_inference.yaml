@@ -5,14 +5,15 @@ seed: 37
 deterministic: False
 self_conditioning: False
 predict_diff: False
-logging_dir: "/root/autodl-tmp/Fold-Embedder/logs"  # better absolute path, to revise
+logging_dir: "./logs"  # better absolute path, to revise
 ckpt_dir: null
 
 data:
-  path_to_dataset: "/root/autodl-tmp/pretrain_dataset/metadata.copy.csv"  # better absolute path, to revise
-  path_to_ccd_info: "/root/autodl-tmp/Fold-Embedder/src/data/ccd_atom37.pkl"  # better absolute path, to revise
+  path_to_dataset: "./data/metadata.csv"  # better absolute path, to revise
+  path_to_ccd_info: "./src/data/ccd_atom37.pkl"  # better absolute path, to revise
   recenter_atoms: True
   eps: 1e-8
+  repr: "CA"
   shuffle: False
   num_workers: 1
   pin_memory: False

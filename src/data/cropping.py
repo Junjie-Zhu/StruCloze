@@ -119,7 +119,7 @@ def spatial_truncate(atom_object, token_object, truncate_size=384):
 
     # Compute distances to the center residue
     distances = np.linalg.norm(atom_com - center_atom_coord, axis=1)
-    truncate_dist = np.sort(distances)[truncate_size - 1]
+    truncate_dist = np.sort(distances)[truncate_size]
     crop_token_mask = distances <= truncate_dist
 
     # Crop token level features

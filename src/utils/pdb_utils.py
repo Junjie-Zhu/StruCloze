@@ -30,7 +30,7 @@ def to_pdb(
     chain_indices = input_feature_dict["chain_index"].squeeze().cpu()
     ref_atom_names = input_feature_dict["ref_atom_name_chars"].squeeze()
     atom_positions = atom_positions.squeeze().cpu()
-    accession_code = input_feature_dict["accession_code"]
+    accession_code = input_feature_dict["accession_code"][0]
 
     restype = [rc.IDX_TO_RESIDUE[res.item()] for res in aatype]
     atom_names = convert_atom_name_id(ref_atom_names)
@@ -60,6 +60,8 @@ def to_pdb(
 
             x, y, z = atom_positions[i]
 
+            if chain_id != chain_id_per_atom[i - 1]:
+                f.write("TER\n")
             f.write(
                 f"ATOM  {i + 1:>5} {atom_name:<4} {resname:>3} {chain_id}{local_res_idx:>4}    "
                 f"{x:8.3f}{y:8.3f}{z:8.3f}  1.00  0.00           {atom_name[0]:>2}\n"
@@ -85,3 +87,4 @@ def convert_atom_name_id(onehot_tensor: torch.Tensor):
         atom_names.append(atom_name.strip())  # Remove padding spaces
 
     return atom_names
+
