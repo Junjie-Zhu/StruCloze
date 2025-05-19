@@ -37,7 +37,7 @@ BEAD SC3   ND1  CE1  HE1
 #
 RESI ILE
 BEAD BB    N    CA   C    O    HN
-BEAD SC1   CB   CG1  CG2  CD
+BEAD SC1   CB   CG1  CG2  CD1
 #
 RESI LYS
 BEAD BB    N    CA   C    O    HN

@@ -157,6 +157,7 @@ def read_martini_topology(name):
                 weight_s[resName] = []
             elif line.startswith("BEAD"):
                 atmName_s = line.strip().split()[2:]
+                atmName_n = []
                 weights = []
                 for i_atm, atmName in enumerate(atmName_s):
                     if "_" in atmName:
@@ -166,8 +167,9 @@ def read_martini_topology(name):
                         weight = float(weight[0]) / float(weight[1]) * atmWeight
                     else:
                         weight = bc.WEIGHT_MAPPING[atmName[0]]
+                    atmName_n.append(atmName)
                     weights.append(weight)
-                top_s[resName].append(atmName_s)
+                top_s[resName].append(atmName_n)
                 weight_s[resName].append(weights)
     return top_s, weight_s
 
@@ -182,6 +184,8 @@ def residue_to_martini(residue):
         # get COM for each group
         atom_coords = np.zeros(3)
         for atm, w in zip(atm_group, wit):
+            if atm.startswith('H'):
+                continue
             atom_coords += residue[residue.atom_name == atm].coord.flatten() * w
         atom_coords /= np.sum(wit)
         particle_coords.append(atom_coords)
