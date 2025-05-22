@@ -40,8 +40,35 @@ pip install -e .
 
 ### Dataset downloading
 
-We have uploaded our training and test dataset to Zenodo. Training set contains `52,926` processed entries from PDB (in format `.pkl.gz`)
+We have uploaded our training and test dataset to Zenodo. Training set contains `52,926` processed entries from PDB (in format `.pkl.gz`), in which features are organized as:
 
+```yaml
+# atom features
+"atom_positions": torch.FloatTensor  # shape: (N_atom, 3)
+"atom_to_token_index": torch.LongTensor  # shape: (N_atom, ), recording token index for each atom
+
+# residue features
+"aatype": torch.LongTensor  # shape: (N_residue, ), recording residue type as numbers (range from 0 to 30)
+"moltype": torch.IntTensor  # shape: (N_residue, ), recording molecule type as numbers (0 for protein, 1 for rna, 2 for dna)
+"residue_index": torch.IntTensor  # shape: (N_residue, ), residue index in each chain
+"token_index": torch.IntTensor  # shape: (N_residue, ), token index in the whole bioassembly
+"chain_index": torch.IntTensor  # shape: (N_residue, )
+
+# CCD reference features
+"ref_positions": torch.FloatTensor  # shape: (N_residue, 3), reference coordinates
+"ref_element": torch.IntTensor  # shape: (N_residue, 32), reference element number converted into one-hot
+"ref_atom_name_chars": torch.IntTensor  # shape: (N_residue, 4, 64), reference atom name converted into one-hot 
+
+# CG representations
+"atom_ca": torch.FloatTensor  # shape: (N_residue, 3), coordinates of CA atoms
+"atom_com": torch.FloatTensor  # shape: (N_residue, 3), coordinates of center of mass
+"ref_ca": torch.FloatTensor  # shape: (N_residue, 3), CA atoms in CCD
+"ref_com": torch.FloatTensor  # shape: (N_residue, 3), center of mass in CCD
+"calv_positions": torch.FloatTensor  # shape: (N_residue, 3), CCD reference positions aligned to atom positions
+```
+
+Please note that these data are saved as numpy arrays and are processed into tensors in `src/data/transform.py` in iterating dataset.
+By default, `calv_positions` are aligned with Martini for proteins and CALVADOS RNA for nucleic acids.
 
 ### Usage
 

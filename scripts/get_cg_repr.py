@@ -1,4 +1,5 @@
 # get CG representations from all-atom structures or from CG structures
+import glob
 import string
 from functools import partial
 from typing import Optional
@@ -186,24 +187,19 @@ def get_cg_repr(
 
             ref_calv_rna_cg = pm.residue_to_calv_rna(comp)
             ref_calv_rna_pos, _, _ = pm.align_single_residue(ref_pos[ref_mask], ref_calv_rna_cg, calv_rna_cg)
-            # isrna1_cg = pm.residue_to_isrna1(residues)
-            # ref_isrna1_cg = pm.residue_to_isrna1(comp)
-            # ref_isrna1_pos, _, _  = pm.align_single_residue(ref_pos[ref_mask], ref_isrna1_cg, isrna1_cg)
-            # isrna2_cg = pm.residue_to_isrna2(residues)
-            # ref_isrna2_cg = pm.residue_to_isrna2(comp)
-            # ref_isrna2_pos, _, _  = pm.align_single_residue(ref_pos[ref_mask], ref_isrna2_cg, isrna2_cg)
 
             calv_positions.append(ref_calv_rna_pos)
-            # isrna1_positions.append(ref_isrna1_pos)
-            # isrna2_positions.append(ref_isrna2_pos)
         elif mol_type == 0:
-            martini_cg = pm.residue_to_martini(residues)
+            try:
+                martini_cg = pm.residue_to_martini(residues)
+            except:
+                continue
             ref_martini_cg = pm.residue_to_martini(comp)
-            ref_martini_pos = pm.align_single_residue(ref_pos[ref_mask], ref_martini_cg, martini_cg)
+            ref_martini_pos, _, _ = pm.align_single_residue(ref_pos[ref_mask], ref_martini_cg, martini_cg)
 
             calv_positions.append(ref_martini_pos)
-            isrna1_positions.append(ref_martini_pos)
-            isrna2_positions.append(ref_martini_pos)
+            #isrna1_positions.append(ref_martini_pos)
+            #isrna2_positions.append(ref_martini_pos)
         else:
             raise ValueError(f"Unknown moltype: {mol_type}")
 
@@ -263,20 +259,25 @@ def get_cg_repr(
 def process_fn(
     input_path,
     output_dir,
+    process_traj=False
 ):
     structure = get_structure(input_path)
+    if not process_traj:
+        accession_code = os.path.basename(input_path).replace('.cif', '')
+    else:
+        accession_code = '_'.join(input_path.split('/')[-2:]).replace('.pdb', '')
 
     try:
         cg_repr = get_cg_repr(structure)
     except ValueError as e:
-        return {}, f"{os.path.basename(input_path).replace('.cif', '')}\t{e}"
+        return {}, f"{accession_code}\t{e}"
 
-    output_path = os.path.join(output_dir, f"{os.path.basename(input_path).replace('.cif', '')}.pkl.gz")
+    output_path = os.path.join(output_dir, f"{accession_code}.pkl.gz")
     with gzip.open(output_path, "wb") as f:
         pickle.dump(cg_repr, f, protocol=pickle.HIGHEST_PROTOCOL)
 
     metadata = {
-        "accession_code": os.path.basename(input_path).replace('.cif', ''),
+        "accession_code": accession_code,
         "token_num": len(cg_repr["token_index"]),
         "moltype": np.unique(cg_repr["moltype"]),
     }
@@ -289,6 +290,7 @@ if __name__ == '__main__':
     parser.add_argument("--input_dir", "-i", type=str, help="Input file path")
     parser.add_argument("--output_dir", "-o", type=str, help="Output file path")
     parser.add_argument("--reference", "-r", type=str, required=False, help="Reference metadata")
+    parser.add_argument("--trajectory", "-t", default=False, action="store_true", help="Whether to process trajectory files")
     args = parser.parse_args()
 
     if not os.path.exists(args.output_dir):
@@ -299,13 +301,18 @@ if __name__ == '__main__':
         rnas = reference[reference['moltype'] == '[1]']
         dnas = reference[reference['moltype'] == '[2]']
         reference = pd.concat([rnas, dnas])
+        #reference = reference[reference['moltype'] == '[0]']
+        reference = reference[reference['token_num'] <= 2048]
         target_files = [os.path.join(args.input_dir, f'{i}.cif') for i in reference['accession_code'].tolist()]
+    elif args.trajectory:
+        target_files = glob.glob(os.path.join(args.input_dir, "*", "*.pdb"))
     else:
         # get all cif files in input_dir
         target_files = [os.path.join(args.input_dir, i) for i in os.listdir(args.input_dir) if i.endswith(".cif")]
     process_fn_ = partial(
         process_fn,
         output_dir=args.output_dir,
+        process_traj=args.trajectory,
     )
 
     cpu_num = os.cpu_count()
@@ -332,6 +339,7 @@ if __name__ == '__main__':
             metadata["moltype"].append(result[0]["moltype"])
 
     metadata = pd.DataFrame(metadata)
-    metadata.to_csv(os.path.join(args.output_dir, "metadata.csv"), index=False)
+    metadata.to_csv(os.path.join(args.output_dir, "metadata_traj.csv"), index=False)
     with open(os.path.join(args.output_dir, "error.log"), "w") as f:
         f.write("\n".join(error))
+
