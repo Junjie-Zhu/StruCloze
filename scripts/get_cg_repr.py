@@ -339,7 +339,8 @@ if __name__ == '__main__':
             metadata["moltype"].append(result[0]["moltype"])
 
     metadata = pd.DataFrame(metadata)
-    metadata.to_csv(os.path.join(args.output_dir, "metadata_traj.csv"), index=False)
+    metadata.to_csv(os.path.join(args.output_dir, "metadata.csv"), index=False)
     with open(os.path.join(args.output_dir, "error.log"), "w") as f:
         f.write("\n".join(error))
+
 
