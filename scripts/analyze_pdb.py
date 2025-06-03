@@ -121,11 +121,19 @@ def get_steric_clashes(
 def get_all_atom_rmsd(
     structure,
     ref_structure,
-    align = True
+    align = True,
+    return_mean = True
 ):
     if align:
         structure, _ = struc.superimpose(ref_structure, structure)
-    return struc.rmsd(ref_structure, structure)
+
+    if return_mean:
+        return struc.rmsd(ref_structure, structure)
+    else:
+        coord_ref_structure = ref_structure.coord
+        coord_structure = structure.coord
+        # return atom-mean squared error
+        return np.mean((coord_ref_structure - coord_structure) ** 2, axis=1)
 
 
 def get_backbone_dihedrals(structure):

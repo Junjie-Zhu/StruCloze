@@ -434,6 +434,7 @@ DNA_STD_RESIDUES = {
 }
 
 STD_RESIDUES = PRO_STD_RESIDUES | RNA_STD_RESIDUES | DNA_STD_RESIDUES
+IDX_TO_RESIDUE = {v: k for k, v in STD_RESIDUES.items()}
 
 ELEMENT_MAPPING = {
     'H': 1, 'HE': 2, 'LI': 3, 'BE': 4, 'B': 5, 'C': 6, 'N': 7, 'O': 8, 'F': 9, 'NE': 10,
