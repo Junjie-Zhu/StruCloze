@@ -85,13 +85,18 @@ class BioTrainingDataset(torch.utils.data.Dataset):
 
         assert path_to_dataset.endswith('.csv'), f"Invalid file extension: {path_to_dataset} (have to be .csv)"
         self._df = pd.read_csv(path_to_dataset)
+
+        # extract only protein data
+        self._df = self._df[self._df['type'] == '[0]']
+        self._df = self._df[self._df['token_num'] > 20]
+
         self._df.sort_values('token_num', ascending=False)
         self._data = self._df['processed_path'].tolist()
 
-        _rna = self._df['type'] == '[1]'
-        _dna = self._df['type'] == '[2]'
-        _non_protein_data = self._df['processed_path'][_rna | _dna]
-        self._data.extend(_non_protein_data.tolist())  # add one more iteration for nucleic acids
+        # _rna = self._df['type'] == '[1]'
+        # _dna = self._df['type'] == '[2]'
+        # _non_protein_data = self._df['processed_path'][_rna | _dna]
+        # self._data.extend(_non_protein_data.tolist())  # add one more iteration for nucleic acids
 
         self.data = np.asarray(self._data)
         self.transform = transform

@@ -221,7 +221,7 @@ def main(args: DictConfig):
         for crt_step, input_feature_dict in train_iter:
             torch.cuda.empty_cache()
             input_feature_dict = to_device(input_feature_dict, device)
-            init_positions = centre_random_augmentation(input_feature_dict['ref_structure'], training_sample)
+            init_positions = centre_random_augmentation(input_feature_dict['ref_structure'], training_sample) * input_feature_dict['translation_mask'][..., None, :, None]
             # init_positions = structure_augment(input_feature_dict, training_sample)  # random rotation on each residue in init positions
             # init_positions = input_feature_dict['atom_com'].unsqueeze(1).expand(-1, training_sample, -1, -1)
             input_feature_dict.pop('atom_com')
