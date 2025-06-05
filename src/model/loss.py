@@ -114,6 +114,7 @@ class MSELoss(nn.Module):
         pred_coordinate: torch.Tensor,
         true_coordinate: torch.Tensor,
         coordinate_mask: torch.Tensor,
+        attention_mask: torch.Tensor,
         per_sample_scale: torch.Tensor = None,
     ) -> torch.Tensor:
         """MSELoss
@@ -140,7 +141,7 @@ class MSELoss(nn.Module):
             true_coordinate_aligned, weight = self.weighted_rigid_align(
                 pred_coordinate=pred_coordinate,
                 true_coordinate=true_coordinate,
-                coordinate_mask=coordinate_mask,
+                coordinate_mask=attention_mask,
             )
 
         # Calculate MSE loss
@@ -552,6 +553,7 @@ class AllLosses(nn.Module):
                          single_mask=None,
                          pair_mask=None,
                          bond_mask=None,
+                         attention_mask=None,
                          lddt_enabled=False,
                          bond_enabled=False
     ):
@@ -561,13 +563,16 @@ class AllLosses(nn.Module):
             pair_mask = single_mask[..., None, :] * single_mask[..., :, None]  # (batch, N, N)
         if bond_mask is None and bond_enabled:
             bond_mask = pair_mask
+        if attention_mask is None:
+            attention_mask = single_mask
 
         losses = {}
         # Calculate MSE loss
         losses["mse_loss"] = self.mse_loss(
             pred_coordinate=pred_positions,
             true_coordinate=true_positions,
-            coordinate_mask=single_mask
+            coordinate_mask=single_mask,
+            attention_mask=attention_mask * single_mask
         )
         if lddt_enabled:
             # Calculate SmoothLDDT loss
@@ -603,6 +608,7 @@ class AllLosses(nn.Module):
                 single_mask=None,
                 pair_mask=None,
                 bond_mask=None,
+                attention_mask=None,
                 lddt_enabled=False,
                 bond_enabled=False
                 ):
@@ -612,6 +618,7 @@ class AllLosses(nn.Module):
             single_mask=single_mask,
             pair_mask=pair_mask,
             bond_mask=bond_mask,
+            attention_mask=attention_mask,
             lddt_enabled=lddt_enabled,
             bond_enabled=bond_enabled
         )
