@@ -11,6 +11,7 @@ import pandas as pd
 import torch
 
 from src.data.transform import FeatureTransform, BioFeatureTransform
+from src.data.preprocess import get_cg_repr, get_structure
 
 
 class ProteinTrainingDataset(torch.utils.data.Dataset):
@@ -231,8 +232,13 @@ class BioInferenceDataset(torch.utils.data.Dataset):
         data_path = self.data[idx]
         accession_code = os.path.basename(data_path).split('.')[0]
 
-        with gzip.open(data_path, 'rb') as f:
-            data_object = pickle.load(f)
+        if data_path.endswith('.pkl.gz'):
+            with gzip.open(data_path, 'rb') as f:
+                data_object = pickle.load(f)
+        elif data_path.endswith('.pdb') or data_path.endswith('.cif'):
+            data_object = get_cg_repr(get_structure(data_path))
+        else:
+            raise ValueError(f"Unsupported file format: {data_path}")
 
         if self.transform is not None:
             data_object = self.transform(data_object)

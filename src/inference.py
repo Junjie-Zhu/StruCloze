@@ -13,7 +13,8 @@ import hydra
 from omegaconf import DictConfig, OmegaConf
 
 from src.data.dataset import InferenceDataset, BioInferenceDataset
-from src.data.transform import FeatureTransform, BioFeatureTransform
+from src.data.transform import FeatureTransform, BioFeatureTransform, convert_atom_name_id
+from src.data.cropping import single_chain_choice
 from src.data.dataloader import get_inference_dataloader
 from src.model.integral import FoldEmbedder
 from src.utils.ddp_utils import DIST_WRAPPER, seed_everything
@@ -65,15 +66,6 @@ def main(args: DictConfig):
     )
 
     # instantiate dataset
-    #dataset = InferenceDataset(
-    #    path_to_dataset=args.data.path_to_dataset,
-    #    suffix='pkl',
-    #    transform=FeatureTransform(
-    #        recenter_atoms=args.data.recenter_atoms,
-    #        eps=args.data.eps,
-    #        ccd_info=args.data.path_to_ccd_info
-    #    ),
-    #)
     dataset = BioInferenceDataset(
         path_to_dataset=args.data.path_to_dataset,
         suffix='pkl.gz',
@@ -129,20 +121,27 @@ def main(args: DictConfig):
     model.eval()
     with torch.no_grad():
         for inference_iter, inference_batch in tqdm(enumerate(inference_loader)):
-            inference_batch = to_device(inference_batch, device)
-            #init_positions = structure_augment(inference_batch, n_samples=1)
-            init_positions = inference_batch["ref_structure"].unsqueeze(1)
+            inference_batch = {k: v.squeeze() for k, v in inference_batch.items()}
 
-            pred_positions = model(
-                initial_positions=init_positions,
-                input_feature_dict=inference_batch,
-            )
-            if args.predict_diff:
-                pred_positions = pred_positions + init_positions
+            pred_structure = []
+            for truncated_batch in single_chain_choice(inference_batch):
+                truncated_batch = to_device({k: v.unsqueeze(0) for k, v in truncated_batch.items()}, device)
+                init_positions = truncated_batch["ref_structure"].unsqueeze(1)
 
+                pred_positions = model(
+                    initial_positions=init_positions,
+                    input_feature_dict=truncated_batch,
+                )
+
+                pred_structure.append(align_with_cg(pred_positions.squeeze(), truncated_batch['atom_com'].squeeze(), truncated_batch)[0])
+
+                if args.predict_diff:
+                    pred_positions = pred_positions + init_positions
+
+            pred_structure = torch.cat(pred_structure, dim=0)
             to_pdb(
                 input_feature_dict=inference_batch,
-                atom_positions=pred_positions,
+                atom_positions=pred_structure,
                 output_dir=os.path.join(logging_dir, "samples"),
             )
 
@@ -179,6 +178,62 @@ def to_device(obj, device):
     else:
         raise Exception(f"type {type(obj)} not supported")
     return obj
+
+
+def align_with_cg(
+    pred_pose: torch.Tensor,
+    true_pose: torch.Tensor,
+    feature_dict: dict,
+):
+    weight = feature_dict["atom_mask"].float().squeeze()
+    ca_mask = convert_atom_name_id(feature_dict["atom_name_chars"]).squeeze() == "CA"
+
+    pred_ca = pred_pose[ca_mask, :]
+    true_ca = true_pose[ca_mask, :]
+    weight = weight[ca_mask]
+
+    weighted_n_atoms = torch.sum(weight, dim=-1, keepdim=True).unsqueeze(-1)
+    pred_pose_centroid = (
+        torch.sum(pred_ca * weight.unsqueeze(-1), dim=-2, keepdim=True)
+        / weighted_n_atoms
+    )
+    pred_pose = (
+        torch.sum(pred_pose * weight.unsqueeze(-1), dim=-2, keepdim=True)
+        / weighted_n_atoms
+    )
+    pred_pose_centered = pred_ca - pred_pose_centroid
+    true_pose_centroid = (
+        torch.sum(true_ca * weight.unsqueeze(-1), dim=-2, keepdim=True)
+        / weighted_n_atoms
+    )
+    true_pose_centered = true_ca - true_pose_centroid
+    H_mat = torch.matmul(
+        (pred_pose_centered * weight.unsqueeze(-1)).transpose(-2, -1),
+        true_pose_centered * weight.unsqueeze(-1),
+    )
+    u, s, v = torch.svd(H_mat)
+    u = u.transpose(-1, -2)
+
+    det = torch.linalg.det(torch.matmul(v, u))
+
+    diagonal = torch.stack(
+        [torch.ones_like(det), torch.ones_like(det), det], dim=-1
+    )
+    rot = torch.matmul(
+        torch.diag_embed(diagonal).to(u.device),
+        u,
+    )
+    rot = torch.matmul(v, rot)
+
+    translate = true_pose_centroid - torch.matmul(
+        pred_pose_centroid, rot.transpose(-1, -2)
+    )
+
+    pred_pose_translated = (
+        torch.matmul(pred_pose, rot.transpose(-1, -2)) + true_pose_centroid
+    )
+
+    return pred_pose_translated, rot, translate
 
 
 if __name__ == '__main__':

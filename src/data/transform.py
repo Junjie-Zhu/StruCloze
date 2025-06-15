@@ -385,16 +385,15 @@ class BioFeatureTransform:
             translation_mask = torch.stack(translation_mask_expand, dim=0)
 
         if repr == 'COM' or repr == 'CA':
-            #translation_mask = (torch.rand(ref_positions.shape[0]) < 0.95).float()
-            # rot_matrix = uniform_random_rotation(data_object['token_index'].shape[0])
-            # rot_matrix_expand = [rot_matrix[i] for i in data_object['atom_to_token_index']]
-            # rot_matrix = torch.stack(rot_matrix_expand, dim=0)
-            # ref_positions = rot_vec_mul(
-            #     r=rot_matrix,
-            #     t=ref_positions - data_object['ref_com'],
-            # )
-            # data_object['ref_structure'] = ref_positions + data_object['atom_com'] * translation_mask[..., None]
-            data_object['ref_structure'] = data_object['atom_positions']
+            rot_matrix = uniform_random_rotation(data_object['token_index'].shape[0])
+            rot_matrix_expand = [rot_matrix[i] for i in data_object['atom_to_token_index']]
+            rot_matrix = torch.stack(rot_matrix_expand, dim=0)
+            ref_positions = rot_vec_mul(
+                r=rot_matrix,
+                t=ref_positions - data_object['ref_com'],
+            )
+            data_object['ref_structure'] = ref_positions + data_object['atom_com'] * translation_mask[..., None]
+            # data_object['ref_structure'] = data_object['atom_positions']
         else:
             data_object['ref_structure'] = data_object['ref_com']
 
@@ -410,7 +409,6 @@ class BioFeatureTransform:
             data_object['bond_mask'] = atom_distances < 3.0
             data_object['translation_mask'] = translation_mask
         return data_object
-
 
 
 

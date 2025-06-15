@@ -1,22 +1,29 @@
 # get CG representations from all-atom structures or from CG structures
+import glob
 import string
+from functools import partial
 from typing import Optional
+import argparse
 import os
+import gzip
+import pickle
+import multiprocessing as mp
 
 import biotite.structure as struc
 import biotite.structure.io.pdbx as pdbx
 import numpy as np
+import pandas as pd
+from tqdm import tqdm
 
-import src.common.residue_constants as rc
-import src.utils.cg_utils as cg
+import biom_constants as bc
+import process_multi_particles as pm
 
 # Global map from chain characters to integers. e.g, A -> 0, B -> 1, etc.
 ALPHANUMERIC = string.ascii_letters + string.digits + ' '
 CHAIN_TO_INT = {
     chain_char: i for i, chain_char in enumerate(ALPHANUMERIC)
 }
-abs_path = os.path.dirname(os.path.abspath(__file__))
-COMPONENT_FILE = os.path.abspath(os.path.join(abs_path, '..', 'common', 'components.cif'))
+COMPONENT_FILE = './protenix_dataset/components.cif'
 ccd_cif = pdbx.CIFFile.read(COMPONENT_FILE)
 
 onehot_dict = {}
@@ -124,10 +131,12 @@ def get_cg_repr(
         if residues[0].hetero:
             continue  # do not process ligands
 
-        comp = pdbx.get_component(ccd_cif, data_block=residues[0].res_name, use_ideal_coord=True)
+        res_name = bc.PRO_restype_1to3.get(residues[0].res_name, residues[0].res_name)
+
+        comp = pdbx.get_component(ccd_cif, data_block=res_name, use_ideal_coord=True)
         comp = comp[~np.isin(comp.element, ["H", "D"])]
 
-        restype_idx = rc.STD_RESIDUES.get(residues[0].res_name, 31)
+        restype_idx = bc.STD_RESIDUES.get(res_name, 31)
         if restype_idx <= 20:
             mol_type = 0  # is protein
         elif restype_idx in [21, 22, 23, 24, 29]:
@@ -135,69 +144,36 @@ def get_cg_repr(
         elif restype_idx in [25, 26, 27, 28, 30]:
             mol_type = 2  # is DNA
         else:
-            raise ValueError(f"Unknown residue type: {residues[0].res_name}")
+            raise ValueError(f"Unknown residue type: {res_name}")
 
-        pos = np.zeros((len(rc.RES_ATOMS_DICT[residues[0].res_name]), 3))
-        mask = np.zeros((len(rc.RES_ATOMS_DICT[residues[0].res_name]),))
+        pos = np.zeros((len(bc.RES_ATOMS_DICT[res_name]), 3))
+        mask = np.zeros((len(bc.RES_ATOMS_DICT[res_name]),))
         a2t_id = np.full_like(mask, fill_value=token_id)
         ca = np.zeros((3,))
         for atom in residues:
-            if atom.atom_name not in rc.RES_ATOMS_DICT[residues[0].res_name]:
-                continue
-            if atom.atom_name in ['OXT', 'OP3']:
-                continue
-            pos[rc.RES_ATOMS_DICT[residues[0].res_name][atom.atom_name]] = atom.coord
+            pos[bc.RES_ATOMS_DICT[res_name]['CA']] = atom.coord
+            ca = atom.coord
 
-            if atom.atom_name in ["CA", "C4'"]:  # for CA models we consider P in nucleotides as CG repr.
-                ca = atom.coord
-
-        ref_pos = np.zeros((len(rc.RES_ATOMS_DICT[residues[0].res_name]), 3))
-        ref_mask = np.zeros((len(rc.RES_ATOMS_DICT[residues[0].res_name]),))
-        element = np.zeros((len(rc.RES_ATOMS_DICT[residues[0].res_name]), 32))
-        weight = np.zeros((len(rc.RES_ATOMS_DICT[residues[0].res_name]),))
-        atom_name_chars = np.zeros((len(rc.RES_ATOMS_DICT[residues[0].res_name]), 4, 64))
+        ref_pos = np.zeros((len(bc.RES_ATOMS_DICT[res_name]), 3))
+        ref_mask = np.zeros((len(bc.RES_ATOMS_DICT[res_name]),))
+        element = np.zeros((len(bc.RES_ATOMS_DICT[res_name]), 32))
+        weight = np.zeros((len(bc.RES_ATOMS_DICT[res_name]),))
+        atom_name_chars = np.zeros((len(bc.RES_ATOMS_DICT[res_name]), 4, 64))
         for atom in comp:
-            if atom.atom_name not in rc.RES_ATOMS_DICT[residues[0].res_name]:
+            if atom.atom_name not in bc.RES_ATOMS_DICT[res_name]:
                 continue
             if atom.atom_name in ['OXT', 'OP3']:
                 continue
-            ref_pos[rc.RES_ATOMS_DICT[residues[0].res_name][atom.atom_name]] = atom.coord
-            ref_mask[rc.RES_ATOMS_DICT[residues[0].res_name][atom.atom_name]] = 1.
-            element[rc.RES_ATOMS_DICT[residues[0].res_name][atom.atom_name]] = onehot_dict[rc.ELEMENT_MAPPING[atom.element]]
-            weight[rc.RES_ATOMS_DICT[residues[0].res_name][atom.atom_name]] = rc.WEIGHT_MAPPING[atom.element]
-            atom_name_chars[rc.RES_ATOMS_DICT[residues[0].res_name][atom.atom_name]] = convert_atom_id_name(atom.atom_name)
+            ref_pos[bc.RES_ATOMS_DICT[res_name][atom.atom_name]] = atom.coord
+            ref_mask[bc.RES_ATOMS_DICT[res_name][atom.atom_name]] = 1.
+            element[bc.RES_ATOMS_DICT[res_name][atom.atom_name]] = onehot_dict[bc.ELEMENT_MAPPING[atom.element]]
+            weight[bc.RES_ATOMS_DICT[res_name][atom.atom_name]] = bc.WEIGHT_MAPPING[atom.element]
+            atom_name_chars[bc.RES_ATOMS_DICT[res_name][atom.atom_name]] = convert_atom_id_name(atom.atom_name)
 
             if atom.atom_name in ["CA", "C4'"]:  # for CA models we consider P in nucleotides as CG repr.
                 ref_ca_ = atom.coord
 
         ref_mask = ref_mask.astype(bool)
-
-        if mol_type == 1 or mol_type == 2:
-            try:
-                calv_rna_cg = cg.residue_to_calv_rna(residues)
-            except:
-                continue
-
-            ref_calv_rna_cg = cg.residue_to_calv_rna(comp)
-            ref_calv_rna_pos, _, _ = cg.align_single_residue(ref_pos[ref_mask], ref_calv_rna_cg, calv_rna_cg)
-            # isrna1_cg = pm.residue_to_isrna1(residues)
-            # ref_isrna1_cg = pm.residue_to_isrna1(comp)
-            # ref_isrna1_pos, _, _  = pm.align_single_residue(ref_pos[ref_mask], ref_isrna1_cg, isrna1_cg)
-            # isrna2_cg = pm.residue_to_isrna2(residues)
-            # ref_isrna2_cg = pm.residue_to_isrna2(comp)
-            # ref_isrna2_pos, _, _  = pm.align_single_residue(ref_pos[ref_mask], ref_isrna2_cg, isrna2_cg)
-
-            calv_positions.append(ref_calv_rna_pos)
-        elif mol_type == 0:
-            martini_cg = cg.residue_to_martini(residues)
-            ref_martini_cg = cg.residue_to_martini(comp)
-            ref_martini_pos = cg.align_single_residue(ref_pos[ref_mask], ref_martini_cg, martini_cg)
-
-            calv_positions.append(ref_martini_pos)
-            isrna1_positions.append(ref_martini_pos)
-            isrna2_positions.append(ref_martini_pos)
-        else:
-            raise ValueError(f"Unknown moltype: {mol_type}")
 
         atom_positions.append(pos[ref_mask])
         atom_to_token_index.append(a2t_id[ref_mask])
@@ -213,13 +189,7 @@ def get_cg_repr(
         ref_atom_name_chars.append(atom_name_chars[ref_mask])
 
         atom_ca.append(np.array([ca] * np.sum(ref_mask)))
-        atom_com.append(
-            np.tile(calc_center_of_mass(pos, weight, ref_mask)[np.newaxis, :], (np.sum(ref_mask), 1))
-        )
         ref_ca.append(np.array([ref_ca_] * np.sum(ref_mask)))
-        ref_com.append(
-            np.tile(calc_center_of_mass(ref_pos, weight, ref_mask)[np.newaxis, :], (np.sum(ref_mask), 1))
-        )
 
         # update token_id and chain_id
         token_id += 1
@@ -242,13 +212,95 @@ def get_cg_repr(
         "ref_atom_name_chars": np.concatenate(ref_atom_name_chars),
 
         "atom_ca": np.concatenate(atom_ca),
-        "atom_com": np.concatenate(atom_com),
         "ref_ca": np.concatenate(ref_ca),
-        "ref_com": np.concatenate(ref_com),
-
-        "calv_positions": np.concatenate(calv_positions),
-        # "isrna1_positions": np.concatenate(isrna1_positions),
-        # "isrna2_positions": np.concatenate(isrna2_positions),
     }
+
+
+def process_fn(
+    input_path,
+    output_dir,
+    process_traj=False
+):
+    structure = get_structure(input_path)
+    if not process_traj:
+        accession_code = os.path.basename(input_path).replace('.cif', '')
+    else:
+        accession_code = '_'.join(input_path.split('/')[-3:]).replace('.pdb', '')
+
+    try:
+        cg_repr = get_cg_repr(structure)
+    except ValueError as e:
+        return {}, f"{accession_code}\t{e}"
+
+    output_path = os.path.join(output_dir, f"{accession_code}.pkl.gz")
+    with gzip.open(output_path, "wb") as f:
+        pickle.dump(cg_repr, f, protocol=pickle.HIGHEST_PROTOCOL)
+
+    metadata = {
+        "accession_code": accession_code,
+        "token_num": len(cg_repr["token_index"]),
+        "moltype": np.unique(cg_repr["moltype"]),
+    }
+
+    return metadata, None
+
+
+if __name__ == '__main__':
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--input_dir", "-i", type=str, help="Input file path")
+    parser.add_argument("--output_dir", "-o", type=str, help="Output file path")
+    parser.add_argument("--reference", "-r", type=str, required=False, help="Reference metadata")
+    parser.add_argument("--trajectory", "-t", default=False, action="store_true", help="Whether to process trajectory files")
+    args = parser.parse_args()
+
+    if not os.path.exists(args.output_dir):
+        os.makedirs(args.output_dir)
+
+    if args.reference is not None:
+        reference = pd.read_csv(args.reference)
+        rnas = reference[reference['moltype'] == '[1]']
+        dnas = reference[reference['moltype'] == '[2]']
+        reference = pd.concat([rnas, dnas])
+        #reference = reference[reference['moltype'] == '[0]']
+        reference = reference[reference['token_num'] <= 2048]
+        target_files = [os.path.join(args.input_dir, f'{i}.cif') for i in reference['accession_code'].tolist()]
+    elif args.trajectory:
+        target_files = glob.glob(os.path.join(args.input_dir, "frames", "*.pdb"))
+    else:
+        # get all cif files in input_dir
+        target_files = [os.path.join(args.input_dir, i) for i in os.listdir(args.input_dir) if i.endswith(".cif")]
+    process_fn_ = partial(
+        process_fn,
+        output_dir=args.output_dir,
+        process_traj=args.trajectory,
+    )
+
+    cpu_num = os.cpu_count()
+    if cpu_num > 1:
+        with mp.Pool(cpu_num) as pool:
+            results = list(tqdm(pool.imap_unordered(process_fn_, target_files), total=len(target_files)))
+    else:
+        results = []
+        for target_file in tqdm(target_files):
+            results.append(process_fn_(target_file))
+
+    metadata = {
+        "accession_code": [],
+        "token_num": [],
+        "moltype": [],
+    }
+    error = []
+    for result in results:
+        if result[1] is not None:
+            error.append(result[1])
+        else:
+            metadata["accession_code"].append(result[0]["accession_code"])
+            metadata["token_num"].append(result[0]["token_num"])
+            metadata["moltype"].append(result[0]["moltype"])
+
+    metadata = pd.DataFrame(metadata)
+    metadata.to_csv(os.path.join(args.output_dir, "metadata.csv"), index=False)
+    with open(os.path.join(args.output_dir, "error.log"), "w") as f:
+        f.write("\n".join(error))
 
 

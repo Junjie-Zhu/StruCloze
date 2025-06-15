@@ -143,3 +143,38 @@ def spatial_truncate(atom_object, token_object, truncate_size=384):
 
     return cropped_atom_object, cropped_token_object
 
+
+def single_chain_choice(atom_object, token_object, truncate_size=384):
+    if token_object['token_index'].shape[0] <= truncate_size:
+        return atom_object, token_object
+
+    chain_ids = np.unique(token_object['chain_index'])
+    chained_data = []
+    for chain_id in chain_ids:
+        chain_indices = np.where(token_object['chain_index'] == chain_id)[0]
+
+        # Crop if still too long
+        if len(chain_indices) > truncate_size:
+            crop_start = np.random.randint(0, len(chain_indices) - truncate_size + 1)
+            crop_end = crop_start + truncate_size
+            chain_indices = chain_indices[crop_start:crop_end]
+
+        # Crop token_object for each key using the precomputed indices
+        cropped_token_object = {k: v[chain_indices] for k, v in token_object.items()}
+
+        # Determine atom cropping boundaries from token indices
+        crop_atom_start = token_object['token_index'][chain_indices[0]]
+        crop_atom_end = token_object['token_index'][chain_indices[-1]]
+        crop_atom_mask = (atom_object['atom_to_token_index'] >= crop_atom_start) & \
+                         (atom_object['atom_to_token_index'] <= crop_atom_end)
+
+        # Crop atom_object for each key using the precomputed indices
+        cropped_atom_object = {k: v[crop_atom_mask] for k, v in atom_object.items()}
+
+        cropped_token_object['token_index'] -= np.min(cropped_token_object['token_index'])
+        cropped_atom_object['atom_to_token_index'] -= np.min(cropped_atom_object['atom_to_token_index'])
+
+        chained_data.append(cropped_atom_object.update(cropped_token_object))
+
+    return chained_data
+
