@@ -182,7 +182,6 @@ def get_cg_repr(
         moltype.append(mol_type)
         residue_index.append(residues[0].res_id)
         token_index.append(token_id)
-        chain_index.append(chain_id)
 
         ref_positions.append(ref_pos[ref_mask])
         ref_element.append(element[ref_mask])
@@ -196,6 +195,7 @@ def get_cg_repr(
         if chain_id_str is not None and chain_id_str != residues[0].chain_id:
             chain_id += 1
         chain_id_str = residues[0].chain_id
+        chain_index.append(chain_id)
 
     return {
         "atom_positions": np.concatenate(atom_positions),

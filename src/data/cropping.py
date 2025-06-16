@@ -1,4 +1,5 @@
 import numpy as np
+import torch
 
 
 def single_chain_truncate(atom_object, token_object, truncate_size=384):
@@ -144,20 +145,35 @@ def spatial_truncate(atom_object, token_object, truncate_size=384):
     return cropped_atom_object, cropped_token_object
 
 
-def single_chain_choice(atom_object, token_object, truncate_size=384):
+def single_chain_choice(data_object, truncate_size=384):
+    atom_object = {
+        'atom_positions': data_object['atom_positions'],
+        'atom_to_token_index': data_object['atom_to_token_index'],
+        'atom_com': data_object['atom_com'],
+        'atom_mask': data_object['atom_mask'],
+
+        'ref_positions': data_object['ref_positions'],
+        'ref_element': data_object['ref_element'],
+        'ref_atom_name_chars': data_object['ref_atom_name_chars'],
+        'ref_com': data_object['ref_com'],
+        'ref_space_uid': data_object['ref_space_uid'],
+        'ref_structure': data_object['ref_structure'],
+        'ref_mask': data_object['ref_mask'],
+    }
+    token_object = {
+        'aatype': data_object['aatype'],
+        'moltype': data_object['moltype'],
+        'residue_index': data_object['residue_index'],
+        'chain_index': data_object['chain_index'],
+        'token_index': data_object['token_index'],
+    }
     if token_object['token_index'].shape[0] <= truncate_size:
         return atom_object, token_object
 
     chain_ids = np.unique(token_object['chain_index'])
     chained_data = []
     for chain_id in chain_ids:
-        chain_indices = np.where(token_object['chain_index'] == chain_id)[0]
-
-        # Crop if still too long
-        if len(chain_indices) > truncate_size:
-            crop_start = np.random.randint(0, len(chain_indices) - truncate_size + 1)
-            crop_end = crop_start + truncate_size
-            chain_indices = chain_indices[crop_start:crop_end]
+        chain_indices = torch.where(token_object['chain_index'] == chain_id)[0]
 
         # Crop token_object for each key using the precomputed indices
         cropped_token_object = {k: v[chain_indices] for k, v in token_object.items()}
@@ -171,10 +187,11 @@ def single_chain_choice(atom_object, token_object, truncate_size=384):
         # Crop atom_object for each key using the precomputed indices
         cropped_atom_object = {k: v[crop_atom_mask] for k, v in atom_object.items()}
 
-        cropped_token_object['token_index'] -= np.min(cropped_token_object['token_index'])
-        cropped_atom_object['atom_to_token_index'] -= np.min(cropped_atom_object['atom_to_token_index'])
+        cropped_token_object['token_index'] -= torch.min(cropped_token_object['token_index'])
+        cropped_atom_object['atom_to_token_index'] -= torch.min(cropped_atom_object['atom_to_token_index'])
 
-        chained_data.append(cropped_atom_object.update(cropped_token_object))
+        cropped_atom_object.update(cropped_token_object)
+        chained_data.append(cropped_atom_object)
 
     return chained_data
 

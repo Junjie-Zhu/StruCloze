@@ -68,7 +68,7 @@ def main(args: DictConfig):
     # instantiate dataset
     dataset = BioInferenceDataset(
         path_to_dataset=args.data.path_to_dataset,
-        suffix='pkl.gz',
+        suffix=args.data.suffix,
         transform=BioFeatureTransform(
             recenter_atoms=args.data.recenter_atoms,
             eps=args.data.eps,
@@ -121,12 +121,16 @@ def main(args: DictConfig):
     model.eval()
     with torch.no_grad():
         for inference_iter, inference_batch in tqdm(enumerate(inference_loader)):
-            inference_batch = {k: v.squeeze() for k, v in inference_batch.items()}
+            accession_code = inference_batch["accession_code"]
+            inference_batch = {k: v.squeeze() for k, v in inference_batch.items() if isinstance(v, torch.Tensor)}
 
             pred_structure = []
             for truncated_batch in single_chain_choice(inference_batch):
                 truncated_batch = to_device({k: v.unsqueeze(0) for k, v in truncated_batch.items()}, device)
                 init_positions = truncated_batch["ref_structure"].unsqueeze(1)
+
+                # recenter for each chain
+                init_positions = init_positions - torch.mean(init_positions, dim=-2, keepdim=True)
 
                 pred_positions = model(
                     initial_positions=init_positions,
@@ -138,6 +142,7 @@ def main(args: DictConfig):
                 if args.predict_diff:
                     pred_positions = pred_positions + init_positions
 
+            inference_batch["accession_code"] = accession_code
             pred_structure = torch.cat(pred_structure, dim=0)
             to_pdb(
                 input_feature_dict=inference_batch,
@@ -186,7 +191,8 @@ def align_with_cg(
     feature_dict: dict,
 ):
     weight = feature_dict["atom_mask"].float().squeeze()
-    ca_mask = convert_atom_name_id(feature_dict["atom_name_chars"]).squeeze() == "CA"
+    ca_mask = convert_atom_name_id(feature_dict["ref_atom_name_chars"].squeeze())
+    ca_mask = [i == "CA" for i in ca_mask]
 
     pred_ca = pred_pose[ca_mask, :]
     true_ca = true_pose[ca_mask, :]
@@ -195,10 +201,6 @@ def align_with_cg(
     weighted_n_atoms = torch.sum(weight, dim=-1, keepdim=True).unsqueeze(-1)
     pred_pose_centroid = (
         torch.sum(pred_ca * weight.unsqueeze(-1), dim=-2, keepdim=True)
-        / weighted_n_atoms
-    )
-    pred_pose = (
-        torch.sum(pred_pose * weight.unsqueeze(-1), dim=-2, keepdim=True)
         / weighted_n_atoms
     )
     pred_pose_centered = pred_ca - pred_pose_centroid
