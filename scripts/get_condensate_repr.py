@@ -120,6 +120,7 @@ def get_cg_repr(
     ref_com = []
 
     # transformed ref_positions
+    calv_cg_positions = []
     calv_positions = []
     isrna1_positions = []
     isrna2_positions = []
@@ -146,13 +147,25 @@ def get_cg_repr(
         else:
             raise ValueError(f"Unknown residue type: {res_name}")
 
+        if mol_type == 0:
+            continue  # first process protein residues
+
         pos = np.zeros((len(bc.RES_ATOMS_DICT[res_name]), 3))
         mask = np.zeros((len(bc.RES_ATOMS_DICT[res_name]),))
         a2t_id = np.full_like(mask, fill_value=token_id)
         ca = np.zeros((3,))
-        for atom in residues:
-            pos[bc.RES_ATOMS_DICT[res_name]['CA']] = atom.coord
-            ca = atom.coord
+
+        if mol_type == 0:
+            for atom in residues:
+                pos[bc.RES_ATOMS_DICT[res_name]['CA']] = atom.coord
+                ca = atom.coord
+        else:
+            calv_rna_cg = np.zeros((2, 3))
+            for atom in residues:
+                if atom.atom_name == 'rN':
+                    calv_rna_cg[0] = atom.coord
+                elif atom.atom_name == 'rP':
+                    calv_rna_cg[1] = atom.coord
 
         ref_pos = np.zeros((len(bc.RES_ATOMS_DICT[res_name]), 3))
         ref_mask = np.zeros((len(bc.RES_ATOMS_DICT[res_name]),))
@@ -175,6 +188,12 @@ def get_cg_repr(
 
         ref_mask = ref_mask.astype(bool)
 
+        # process rna part
+        if mol_type != 0:
+            ref_calv_rna_cg = pm.residue_to_calv_rna(comp)
+            ref_calv_rna_pos, _, _ = pm.align_single_residue(ref_pos[ref_mask], ref_calv_rna_cg, calv_rna_cg)
+            calv_positions.append(ref_calv_rna_pos)
+
         atom_positions.append(pos[ref_mask])
         atom_to_token_index.append(a2t_id[ref_mask])
 
@@ -189,6 +208,8 @@ def get_cg_repr(
 
         atom_ca.append(np.array([ca] * np.sum(ref_mask)))
         ref_ca.append(np.array([ref_ca_] * np.sum(ref_mask)))
+
+        calv_cg_positions.append(calv_rna_cg)
 
         # update token_id and chain_id
         token_id += 1
@@ -213,6 +234,9 @@ def get_cg_repr(
 
         "atom_ca": np.concatenate(atom_ca),
         "ref_ca": np.concatenate(ref_ca),
+
+        "calv_cg_positions": np.concatenate(calv_cg_positions),
+        "calv_positions": np.concatenate(calv_positions),
     }
 
 

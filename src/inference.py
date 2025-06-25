@@ -18,7 +18,7 @@ from src.data.cropping import single_chain_choice
 from src.data.dataloader import get_inference_dataloader
 from src.model.integral import FoldEmbedder
 from src.utils.ddp_utils import DIST_WRAPPER, seed_everything
-from src.utils.pdb_utils import to_pdb
+from src.utils.pdb_utils import to_pdb, to_mmcif
 
 rootutils.setup_root(__file__, indicator=".project-root", pythonpath=True)
 warnings.filterwarnings("ignore", category=FutureWarning)
@@ -144,11 +144,20 @@ def main(args: DictConfig):
 
             inference_batch["accession_code"] = accession_code
             pred_structure = torch.cat(pred_structure, dim=0)
-            to_pdb(
-                input_feature_dict=inference_batch,
-                atom_positions=pred_structure,
-                output_dir=os.path.join(logging_dir, "samples"),
-            )
+
+            chain_num = torch.max(inference_batch["chain_index"]).item() + 1
+            if chain_num <= 62:
+                to_pdb(
+                    input_feature_dict=inference_batch,
+                    atom_positions=pred_structure,
+                    output_dir=os.path.join(logging_dir, "samples"),
+                )
+            else:
+                to_mmcif(
+                    input_feature_dict=inference_batch,
+                    atom_positions=pred_structure,
+                    output_dir=os.path.join(logging_dir, "samples"),
+                )
 
             torch.cuda.empty_cache()
 

@@ -460,6 +460,10 @@ PRO_restype_3to1 = {
 }
 PRO_restype_1to3 = {v: k for k, v in PRO_restype_3to1.items()}
 
+### only for condensates
+PRO_restype_1to3.update({'r': 'U'})  # 'r' is used for RNA in condensates
+###
+
 ELEMENT_MAPPING = {
     'H': 1, 'HE': 2, 'LI': 3, 'BE': 4, 'B': 5, 'C': 6, 'N': 7, 'O': 8, 'F': 9, 'NE': 10,
     'NA': 11, 'MG': 12, 'AL': 13, 'SI': 14, 'P': 15, 'S': 16,
