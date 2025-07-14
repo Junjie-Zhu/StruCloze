@@ -1,16 +1,16 @@
-# Completing Any Missing Structural Elements in Biomolecules with StruCloze
+# StruCloze: A Unified Framework for Backmapping and Inpainting of Biomolecular Structures
 <a href="https://pytorch.org/get-started/locally/"><img alt="PyTorch" src="https://img.shields.io/badge/PyTorch-ee4c2c?logo=pytorch&logoColor=white"></a>
 <a href="https://hydra.cc/"><img alt="Config: Hydra" src="https://img.shields.io/badge/Config-Hydra-89b8cd"></a>
-[![biorXiv](https://img.shields.io/badge/biorxiv.2024.05.05.592611-B31B1B)](https://www.biorxiv.org/content/10.1101/2024.05.05.592611v2)
+[![biorXiv](https://img.shields.io/badge/biorxiv.2025.06.26.661889-B31B1B)](https://www.biorxiv.org/content/10.1101/2025.06.26.661889v1)
 
-This repository contains code for "**Completing Any Missing Structural Elements in Biomolecules with StruCloze**", which raise a unified framework for back-mapping coarse-grained structures and completing missing residues, nucleotides in existing experimental structures.
+This repository contains code for "**StruCloze: A Unified Framework for Backmapping and Inpainting of Biomolecular Structures**", which raise a unified framework for back-mapping coarse-grained structures and completing missing residues, nucleotides in existing experimental structures.
 
 ![Overview of StruCloze](./assets/toc.png)
 
 ### Table of contents
 
 * Installation
-* Dataset downloading **[Optional]** 
+* Data downloading 
 * Usage
   * Back-mapping coarse-grained structures
   * Completing missing tokens
@@ -32,16 +32,18 @@ git clone https://github.com/Junjie-Zhu/StruCloze.git
 cd StruCloze
 
 # Create and activate environment
-conda env create -f strucloze.yaml
+conda env create -f environment.yaml
 source activate strucloze
 
 # Install strucloze as a package.
 pip install -e .
 ```
 
-### Dataset downloading
+### Data downloading
 
-We have uploaded our training and test dataset to Zenodo. Training set contains `52,926` processed entries from PDB (in format `.pkl.gz`), in which features are organized as:
+We have uploaded our test dataset (the training set is too large, maybe upload later...) to [Zenodo](https://doi.org/10.5281/zenodo.15524132). 
+
+Training and test set contains processed entries from PDB (in format `.pkl.gz`), in which features are organized as:
 
 ```yaml
 # atom features
@@ -145,6 +147,7 @@ Any suggestions or bug reports are welcome. Please open an issue in the GitHub r
 If you have any questions, please contact me via email: shiroyuki@sjtu.edu.cn
 Or open an issue in the GitHub repository.
 
-### Acknowledgement
+### Still under development
 
-A lot thanks to <a href="https://github.com/Immortals-33">Zhuoqi Zheng</a> who helped in idea formation and manuscript presenting, and <a href="">Jinyu Yu</a> who has 
+* Checkpoints will be uploaded later.
+* Detailed check of the code will be done later.
