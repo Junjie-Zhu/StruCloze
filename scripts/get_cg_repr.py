@@ -23,8 +23,9 @@ ALPHANUMERIC = string.ascii_letters + string.digits + ' '
 CHAIN_TO_INT = {
     chain_char: i for i, chain_char in enumerate(ALPHANUMERIC)
 }
-COMPONENT_FILE = './protenix_dataset/components.cif'
-ccd_cif = pdbx.CIFFile.read(COMPONENT_FILE)
+crt_path = os.path.dirname(os.path.abspath(__file__))
+COMPONENT_FILE = os.path.abspath(os.path.join(crt_path, '..', 'src', 'common', 'components.cif'))
+ccd_cif = pdbx.CIFFile().read(COMPONENT_FILE)
 
 onehot_dict = {}
 for index, key in enumerate(range(32)):

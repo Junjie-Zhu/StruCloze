@@ -122,38 +122,48 @@ def main(args: DictConfig):
     with torch.no_grad():
         for inference_iter, inference_batch in tqdm(enumerate(inference_loader)):
             accession_code = inference_batch["accession_code"]
-            inference_batch = {k: v.squeeze() for k, v in inference_batch.items() if isinstance(v, torch.Tensor)}
 
-            pred_structure = []
-            for truncated_batch in single_chain_choice(inference_batch):
-                truncated_batch = to_device({k: v.unsqueeze(0) for k, v in truncated_batch.items()}, device)
-                init_positions = truncated_batch["ref_structure"].unsqueeze(1)
+            chain_num = torch.max(inference_batch["chain_index"]).item() + 1
+            if chain_num > 62:
+                inference_batch = {k: v.squeeze() for k, v in inference_batch.items() if isinstance(v, torch.Tensor)}
+
+                pred_structure = []
+                for truncated_batch in single_chain_choice(inference_batch):
+                    truncated_batch = to_device({k: v.unsqueeze(0) for k, v in truncated_batch.items()}, device)
+                    init_positions = truncated_batch["ref_structure"].unsqueeze(1)
+
+                    # recenter for each chain
+                    init_positions = init_positions - torch.mean(init_positions, dim=-2, keepdim=True)
+
+                    pred_positions = model(
+                        initial_positions=init_positions,
+                        input_feature_dict=truncated_batch,
+                    )
+
+                    pred_structure.append(align_with_cg(pred_positions.squeeze(), truncated_batch['atom_com'].squeeze(), truncated_batch)[0])
+                pred_structure = torch.cat(pred_structure, dim=0)
+
+            else:
+                inference_batch = to_device(inference_batch, device)
+                init_positions = inference_batch["ref_structure"].unsqueeze(1)
 
                 # recenter for each chain
                 init_positions = init_positions - torch.mean(init_positions, dim=-2, keepdim=True)
 
-                pred_positions = model(
+                pred_structure = model(
                     initial_positions=init_positions,
-                    input_feature_dict=truncated_batch,
+                    input_feature_dict=inference_batch,
                 )
+                inference_batch["accession_code"] = accession_code
 
-                pred_structure.append(align_with_cg(pred_positions.squeeze(), truncated_batch['atom_com'].squeeze(), truncated_batch)[0])
-
-                if args.predict_diff:
-                    pred_positions = pred_positions + init_positions
-
-            inference_batch["accession_code"] = accession_code
-            pred_structure = torch.cat(pred_structure, dim=0)
-
-            chain_num = torch.max(inference_batch["chain_index"]).item() + 1
-            if chain_num <= 62:
-                to_pdb(
+            if chain_num >= 62 or args.save_mmcif:
+                to_mmcif(
                     input_feature_dict=inference_batch,
                     atom_positions=pred_structure,
                     output_dir=os.path.join(logging_dir, "samples"),
                 )
             else:
-                to_mmcif(
+                to_pdb(
                     input_feature_dict=inference_batch,
                     atom_positions=pred_structure,
                     output_dir=os.path.join(logging_dir, "samples"),

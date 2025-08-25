@@ -10,6 +10,7 @@ import biotite.structure.io.pdb as pdb
 import biotite.structure.io.pdbx as pdbx
 
 import src.common.residue_constants as rc
+from biotite.structure.io.pdbx import CIFCategory
 
 ALPHANUMERIC = string.ascii_letters + string.digits + ' '
 CHAIN_TO_INT = {
@@ -25,7 +26,6 @@ def to_pdb(
     atom_positions: torch.Tensor,
     output_dir: str,
 ):
-    """save atom_positions as pdb with biotite"""
     aatype = input_feature_dict["aatype"].squeeze()
     atom_to_token_index = input_feature_dict["atom_to_token_index"].squeeze().cpu()
     chain_indices = input_feature_dict["chain_index"].squeeze().cpu()
@@ -61,7 +61,7 @@ def to_pdb(
 
             x, y, z = atom_positions[i]
 
-            if chain_id != chain_id_per_atom[i - 1]:
+            if chain_id != chain_id_per_atom[i - 1] and i > 0:
                 f.write("TER\n")
             f.write(
                 f"ATOM  {i + 1:>5} {atom_name:<4} {resname:>3} {chain_id}{local_res_idx:>4}    "
@@ -112,9 +112,9 @@ def to_mmcif(
             chain_to_res_map[cid][res_idx]
             for res_idx, cid in zip(residue_indices, chain_id_per_atom)
         ],
-        "Cartn_x": atom_positions[:, 0].tolist(),
-        "Cartn_y": atom_positions[:, 1].tolist(),
-        "Cartn_z": atom_positions[:, 2].tolist(),
+        "Cartn_x": [f'{a:.3f}' for a in atom_positions[:, 0].tolist()],
+        "Cartn_y": [f'{a:.3f}' for a in atom_positions[:, 1].tolist()],
+        "Cartn_z": [f'{a:.3f}' for a in atom_positions[:, 2].tolist()],
         "occupancy": [1.0] * n_atoms,
         "B_iso_or_equiv": [0.0] * n_atoms,
         "pdbx_PDB_model_num": [1] * n_atoms,
@@ -123,10 +123,8 @@ def to_mmcif(
     # Write mmCIF file
     os.makedirs(output_dir, exist_ok=True)
     cif_file_path = os.path.join(output_dir, f"{accession_code}.cif")
-    cif_file = pdbx.PDBxFile()
-    cif_file.__setitem__((accession_code, "atom_site"), cif_block)
-    with open(cif_file_path, 'w') as f:
-        cif_file.write(f)
+    cif_file = pdbx.CIFFile({accession_code: pdbx.CIFBlock({'atom_site': CIFCategory(cif_block)})})
+    cif_file.write(cif_file_path)
 
 
 def convert_atom_name_id(onehot_tensor: torch.Tensor):

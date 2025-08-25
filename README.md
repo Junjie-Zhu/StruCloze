@@ -16,9 +16,7 @@ This repository contains code for "**StruCloze: A Unified Framework for Backmapp
   * Completing missing tokens
   * Analyzing predicted structures
 * Train
-* Some existing bugs
-* Contact
-* Acknowledgement
+* Contat
 
 ------
 
@@ -41,9 +39,9 @@ pip install -e .
 
 ### Data downloading
 
-We have uploaded our test dataset (the training set is too large, maybe upload later...) to [Zenodo](https://doi.org/10.5281/zenodo.15524132). 
+We have uploaded the checkpoints and test dataset to [Zenodo](https://doi.org/10.5281/zenodo.15876216). 
 
-Training and test set contains processed entries from PDB (in format `.pkl.gz`), in which features are organized as:
+Test set contains processed entries from PDB (in format `.pkl.gz`), in which features are organized as:
 
 ```yaml
 # atom features
@@ -81,18 +79,19 @@ Extracting CG models from all-atom structures can be done with `scripts/get_cg_r
 
 ```bash
 python scripts/get_cg_repr.py \
-  -i /path/to/structure/ \
-  -o /path/to/output/cg/
+  -i ./example/cif \
+  -o ./example/pkl 
 ```
 
-Currently CG models are extracted as numpy arrays, we will update pdb format output in the future. 
+Currently, CG models are extracted as numpy arrays, we will update pdb format output in the future. 
 
 To backmap CG models with StruCloze, you may refer to the following command:
 
 ```bash
 python src/inference.py \
   ckpt_dir=/path/to/checkpoint.ckpt \
-  data.path_to_dataset=/path/to/cg/dataset/ 
+  data.path_to_dataset=./example/pkl \
+  data.repr=COM  # or CA, or calv_RNA
 ```
 
 If `data.path_to_dataset` is set as a directory, it will automatically search for all `.pdb` files in the directory and back-map them. Metadata file is also supported by setting `data.path_to_dataset` as a file path (`.csv`).

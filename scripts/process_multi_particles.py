@@ -1,3 +1,5 @@
+import os
+
 import biotite.structure as struc
 import numpy as np
 import torch
@@ -174,7 +176,8 @@ def read_martini_topology(name):
     return top_s, weight_s
 
 
-top_s, weight_s = read_martini_topology('martini3.top')
+crt_path = os.path.dirname(os.path.abspath(__file__))
+top_s, weight_s = read_martini_topology(os.path.join(crt_path, '..', 'src', 'common', 'martini3.top'))
 def residue_to_martini(residue):
     crt_top_s = top_s[residue.res_name[0]]
     crt_weight_s = weight_s[residue.res_name[0]]
