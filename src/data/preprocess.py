@@ -180,22 +180,19 @@ def get_cg_repr(
 
             ref_calv_rna_cg = cg.residue_to_calv_rna(comp)
             ref_calv_rna_pos, _, _ = cg.align_single_residue(ref_pos[ref_mask], ref_calv_rna_cg, calv_rna_cg)
-            # isrna1_cg = pm.residue_to_isrna1(residues)
-            # ref_isrna1_cg = pm.residue_to_isrna1(comp)
-            # ref_isrna1_pos, _, _  = pm.align_single_residue(ref_pos[ref_mask], ref_isrna1_cg, isrna1_cg)
-            # isrna2_cg = pm.residue_to_isrna2(residues)
-            # ref_isrna2_cg = pm.residue_to_isrna2(comp)
-            # ref_isrna2_pos, _, _  = pm.align_single_residue(ref_pos[ref_mask], ref_isrna2_cg, isrna2_cg)
 
             calv_positions.append(ref_calv_rna_pos)
         elif mol_type == 0:
-            martini_cg = cg.residue_to_martini(residues)
+            try:
+                martini_cg = cg.residue_to_martini(residues)
+            except:
+                continue
             ref_martini_cg = cg.residue_to_martini(comp)
-            ref_martini_pos = cg.align_single_residue(ref_pos[ref_mask], ref_martini_cg, martini_cg)
+            ref_martini_pos, _, _ = cg.align_single_residue(ref_pos[ref_mask], ref_martini_cg, martini_cg)
 
             calv_positions.append(ref_martini_pos)
-            isrna1_positions.append(ref_martini_pos)
-            isrna2_positions.append(ref_martini_pos)
+            #isrna1_positions.append(ref_martini_pos)
+            #isrna2_positions.append(ref_martini_pos)
         else:
             raise ValueError(f"Unknown moltype: {mol_type}")
 

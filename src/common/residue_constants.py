@@ -444,3 +444,8 @@ WEIGHT_MAPPING = {
 ATOM_WEIGHT_MAPPING = {
     k: [WEIGHT_MAPPING[atom[0]] for atom in v.keys()] for k, v in RES_ATOMS_DICT.items()
 }
+
+ELEMENT_MAPPING = {
+    'H': 1, 'HE': 2, 'LI': 3, 'BE': 4, 'B': 5, 'C': 6, 'N': 7, 'O': 8, 'F': 9, 'NE': 10,
+    'NA': 11, 'MG': 12, 'AL': 13, 'SI': 14, 'P': 15, 'S': 16,
+}
